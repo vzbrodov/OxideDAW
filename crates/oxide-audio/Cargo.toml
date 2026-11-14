@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+oxide-dsp = { path = "../oxide-dsp" }
 oxide-core = { path = "../oxide-core" }
 cpal.workspace = true
 ringbuf.workspace = true

@@ -1,4 +1,5 @@
 //! Oxide DSP - Digital signal processing, oscillators, samplers, and basic effects.
+pub mod sample;
 
 pub struct SamplerVoice {
     pub pitch: f32,

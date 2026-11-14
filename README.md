@@ -6,6 +6,32 @@
 
 ## Overview
 
+### Implementation status
+
+This repository is an early prototype. The CLI now contains device enumeration
+and one-shot audio playback with volume control. The workspace builds and six
+unit tests pass; real audio hardware playback remains unverified. A four-track,
+16-step scheduler with BPM, loop, pause and stop is implemented in `oxide-core`,
+but is not yet connected to sample playback. The DAW features
+described below are planned, unless explicitly marked complete.
+
+First development target: Linux. Install a Rust toolchain and the ALSA development
+package (`libasound2-dev` on Debian/Ubuntu or `alsa-lib-devel` on Fedora).
+
+```sh
+cargo test --workspace
+cargo run -p oxide-app -- devices
+cargo run -p oxide-app -- play /path/to/sample.wav 0.5
+# Optional exact output device name as the final argument:
+cargo run -p oxide-app -- play /path/to/sample.wav 0.5 "device name"
+```
+
+Press Enter to stop. Playback runs once and then outputs silence until stopped.
+The prototype decodes the entire file into memory before starting playback,
+supports mono/stereo input, and uses linear interpolation when sample rates differ.
+It uses the default CPAL host and device configuration; dedicated PipeWire/JACK
+integration, latency controls, and production-quality resampling remain planned.
+
 **OxideDAW** is an independent, general-purpose, cross-platform Digital Audio Workstation built for musicians, producers, sound designers, and composers on Windows and Linux. 
 
 Whether you are writing orchestral arrangements, recording live acoustic instruments, producing beats, scoring games, or mixing multi-track audio, OxideDAW combines the high-speed pattern-and-clip workflow loved by modern producers with deep multi-track recording and mixing capabilities.
@@ -77,8 +103,10 @@ The embedded MCP interface exposes tools that allow AI assistants to manipulate 
 
 ## Development Roadmap
 
+Working implementation plan and handoff notes (Russian): [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). This document records the inspected implementation state, MVP scope, and next steps; the phases below describe the broader vision.
+
 ### Phase 1: Engine Foundation
-- [ ] Initialize Cargo workspace structure.
+- [x] Initialize Cargo workspace structure.
 - [ ] Implement audio device abstraction via `cpal` (WASAPI & PipeWire).
 - [ ] Create lock-free ring-buffer communication between audio thread and main thread.
 - [ ] Build basic multi-channel playback clock (BPM, transport start/stop/seek).

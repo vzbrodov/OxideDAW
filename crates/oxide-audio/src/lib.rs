@@ -1,4 +1,5 @@
 //! Oxide Audio - Real-time audio engine, driver management, and lock-free rings.
+pub mod playback;
 
 pub struct AudioEngineConfig {
     pub sample_rate: u32,

@@ -1,4 +1,5 @@
 //! Oxide Core - Central data models, timeline, project definitions.
+pub mod sequencer;
 
 use serde::{Deserialize, Serialize};
 
