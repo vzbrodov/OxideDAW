@@ -1,0 +1,16 @@
+[package]
+name = "oxide-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+oxide-core = { path = "../oxide-core" }
+oxide-audio = { path = "../oxide-audio" }
+oxide-dsp = { path = "../oxide-dsp" }
+oxide-midi = { path = "../oxide-midi" }
+oxide-plugin-sdk = { path = "../oxide-plugin-sdk" }
+oxide-mcp = { path = "../oxide-mcp" }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

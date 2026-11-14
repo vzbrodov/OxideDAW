@@ -1,0 +1,128 @@
+# OxideDAW
+
+> A modern, blazing-fast, open-source Digital Audio Workstation (DAW) for all genres of music production, sound design, and audio engineering, written in Rust with native Model Context Protocol (MCP) integration.
+
+---
+
+## Overview
+
+**OxideDAW** is an independent, general-purpose, cross-platform Digital Audio Workstation built for musicians, producers, sound designers, and composers on Windows and Linux. 
+
+Whether you are writing orchestral arrangements, recording live acoustic instruments, producing beats, scoring games, or mixing multi-track audio, OxideDAW combines the high-speed pattern-and-clip workflow loved by modern producers with deep multi-track recording and mixing capabilities.
+
+By leveraging Rust, OxideDAW delivers deterministic real-time audio safety without garbage collection pauses, ultra-low latency audio processing on both Windows (WASAPI) and Linux (PipeWire / JACK / ALSA), and a lightweight, GPU-accelerated interface.
+
+In addition, OxideDAW features a native **Model Context Protocol (MCP)** server embedded directly into the application, turning AI assistants into interactive studio co-producers capable of manipulating MIDI sequences, arrangements, audio routing, and mixer states via structured protocol messages.
+
+---
+
+## Core Pillars
+
+1. **Deterministic Real-Time Audio Engine**
+   - Engineered in Rust for high reliability and memory safety without GC-induced audio glitches or buffer dropouts.
+   - Lock-free, wait-free ring buffers between the real-time audio thread and the UI/worker threads.
+   - Low-latency native audio drivers: WASAPI on Windows, and PipeWire / JACK / ALSA on Linux.
+
+2. **Versatile Workflow for Any Musical Genre**
+   - **Multi-Track Audio Recording & Editing:** Seamless tracking for vocals, guitars, synths, and external hardware.
+   - **Next-Gen Piano Roll:** Polyphonic MIDI editing, micro-tuning, chord generation, scale quantization, slide/glide notes, and per-note velocity/expression.
+   - **Pattern & Step Sequencer:** Rapid percussion programming, polyrhythms, and clip-based arranging.
+   - **Channel Rack & Sampler:** High-quality multi-format audio playback, time-stretching, pitch shifting, and ADSR modulation.
+
+3. **Open Plugin Architecture & Plugin Creation Ecosystem**
+   - **CLAP & VST3 Hosting:** Seamlessly load your favorite third-party virtual instruments and VST3/CLAP effects.
+   - **Custom Plugin SDK (`oxide-plugin-sdk`):** A first-class Rust and WebAssembly (WASM) SDK allowing developers and sound designers to build custom native synths, samplers, and audio effects with hot-reloading.
+   - **Visual Modular Node Environment (Patcher Rack):** Wire up multiple plugins, split frequency bands, route MIDI, and create complex custom composite instruments and multi-effect chains on an infinite visual canvas.
+   - **Live Scripting Engine:** Write lightweight scripts (WASM / Rhai / Lua) for algorithmic MIDI generation, custom arpeggiators, and generative sequencing in real time.
+
+4. **Embedded Model Context Protocol (MCP) Engine**
+   - Built-in MCP server communicating over standard I/O or local WebSockets.
+   - Enables connected AI agents (Claude, Cursor, local LLMs) to query project state, generate MIDI parts, configure mixer routing, and assist with sound design and orchestration programmatically.
+
+---
+
+## System Architecture
+
+OxideDAW is structured as a modular Cargo workspace:
+
+```
+OxideDAW/
+├── crates/
+│   ├── oxide-core/        # Project model, timeline graph, track state, serialization
+│   ├── oxide-audio/       # Real-time audio engine, driver abstractions (WASAPI, PipeWire)
+│   ├── oxide-dsp/         # Native DSP nodes: filters, envelopes, basic oscillators, samplers
+│   ├── oxide-midi/        # MIDI events, Piano Roll data structures, quantization
+│   ├── oxide-plugin-sdk/  # SDK and API for creating custom native / WASM instruments & effects
+│   ├── oxide-plugins/     # CLAP and VST3 host implementation & Patcher modular graph
+│   ├── oxide-mcp/         # MCP server protocol implementation & tool handlers
+│   ├── oxide-ui/          # GPU-rendered interface (wgpu + egui / iced)
+│   └── oxide-app/         # Main desktop application binary and entry point
+├── assets/                # Stock sounds, factory presets, and UI assets
+└── README.md
+```
+
+---
+
+## MCP Tool Interfaces (AI Co-Producer)
+
+The embedded MCP interface exposes tools that allow AI assistants to manipulate musical data directly inside the project:
+
+- `generate_drum_pattern`: Program kick, snare, clap, and hi-hat triggers onto a target pattern grid with custom velocity dynamics and swing.
+- `create_chord_progression`: Insert diatonic or modal chord voicings into the Piano Roll based on scale, root key, and rhythmic pacing.
+- `humanize_notes`: Apply non-destructive micro-timing nudges and velocity variations to humanize quantized MIDI clips.
+- `route_mixer_channel`: Configure channel gains, pans, sends, and sidechain compression routings across mixer tracks.
+- `get_project_summary`: Provide the agent with context regarding BPM, active tracks, key signatures, and time signatures.
+
+---
+
+## Development Roadmap
+
+### Phase 1: Engine Foundation
+- [ ] Initialize Cargo workspace structure.
+- [ ] Implement audio device abstraction via `cpal` (WASAPI & PipeWire).
+- [ ] Create lock-free ring-buffer communication between audio thread and main thread.
+- [ ] Build basic multi-channel playback clock (BPM, transport start/stop/seek).
+
+### Phase 2: Sampler & Step Sequencer
+- [ ] Implement audio sample decoder (WAV, FLAC, MP3, OGG) via `symphonia`.
+- [ ] Build single-shot sampler voice with pitch transposition and volume envelope.
+- [ ] Construct the 16-step grid sequencer state and playback dispatcher.
+
+### Phase 3: Graphical Interface MVP
+- [ ] Initialize GPU-rendered UI window using `wgpu` and a declarative UI framework.
+- [ ] Render interactive step sequencer grid with playback cursor.
+- [ ] Implement drag-and-drop sample loading into sampler tracks.
+
+### Phase 4: Piano Roll & MIDI Subsystem
+- [ ] Create MIDI event sequence model (note on, note off, pitch bend, velocity).
+- [ ] Build Piano Roll editor with zoom, note creation, resizing, and snapping to musical grid.
+- [ ] Implement polyphonic MIDI playback routing to virtual instruments.
+
+### Phase 5: Mixer & Built-in FX
+- [ ] Build multi-channel audio mixer with volume faders, panning, and solo/mute toggles.
+- [ ] Implement native DSP effects: Parametric Equalizer, Stereo Delay, Reverb, Compressor.
+- [ ] Add sidechain ducking support between mixer channels.
+
+### Phase 6: Plugin Ecosystem & Modular Patcher
+- [ ] Integrate CLAP & VST3 plugin hosting layer for external instruments and effects.
+- [ ] Design and implement `oxide-plugin-sdk` for authoring custom native and WASM plugins.
+- [ ] Build visual modular node environment ("Patcher") to chain, split, and modulate multiple plugins visually.
+- [ ] Implement lightweight scripting runtime for generative MIDI and custom algorithmic effects.
+
+### Phase 7: Model Context Protocol (MCP) Integration
+- [ ] Embed lightweight JSON-RPC / MCP server within the daemon/app.
+- [ ] Expose sequence, mixer, and project manipulation tools to AI agents.
+- [ ] Test end-to-end workflows with external agents (e.g. Claude Desktop, Cursor).
+
+---
+
+## Target Platforms
+
+- **Windows 10 / 11** (x86_64) via WASAPI low-latency audio.
+- **Linux** (x86_64, aarch64) via PipeWire, JACK, and ALSA.
+
+---
+
+## License
+
+This project is licensed under the Apache 2.0 License or MIT License at your option.
