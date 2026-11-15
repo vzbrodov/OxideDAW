@@ -11,9 +11,10 @@
 This repository is an early prototype. The CLI now contains device enumeration
 and one-shot audio playback with volume control. A four-track, 16-step sequencer
 now drives a sampler with eight voices per track, velocity, stereo mixing and
-master volume. The CLI can loop a preset drum pattern from four sample files.
+master volume. The CLI can loop a preset drum pattern from four sample files, save a versioned
+JSON project, inspect it and play it again after reopening.
 The renderer supports pause, stop and one-shot tail playback; the CLI stops on Enter.
-The workspace builds and 12 unit tests pass; real audio hardware playback remains
+The workspace builds and 19 tests pass; real audio hardware playback remains
 unverified. The DAW features
 described below are planned, unless explicitly marked complete.
 
@@ -33,13 +34,34 @@ cargo run -p oxide-app -- play /path/to/sample.wav 0.5 "device name"
 `play` runs once and then outputs silence; `pattern` loops until Enter.
 Both commands accept an exact output device name as their final optional argument.
 The demo triggers kick on steps 1/5/9/13, snare on 5/13, hi-hat on odd steps,
-and percussion on step 15. Pattern editing and live tempo changes remain planned.
+and percussion on step 15. You can edit velocities in saved JSON projects;
+editing commands, undo/redo and live tempo changes remain planned.
 Overlapping hits use eight voices per track, replacing the oldest hit when full.
 The summed output is hard-clipped to the range -1..1; reduce volume if it distorts.
 The prototype decodes the entire file into memory before starting playback,
 supports mono/stereo input, and uses linear interpolation when sample rates differ.
 It uses the default CPAL host and device configuration; dedicated PipeWire/JACK
 integration, latency controls, and production-quality resampling remain planned.
+
+### Saving and reopening a beat
+
+```sh
+# Keep samples alongside the project (or in its subdirectories) for portability.
+cargo run -p oxide-app -- project-new beat.oxide.json kick.wav snare.wav hat.wav perc.wav 137 0.3
+cargo run -p oxide-app -- project-info beat.oxide.json
+cargo run -p oxide-app -- project-play beat.oxide.json
+# Optional output device:
+cargo run -p oxide-app -- project-play beat.oxide.json "device name"
+```
+
+`project-new` saves the built-in beat and refuses to overwrite an existing file.
+The JSON stores track IDs/names, sample references, BPM, target sample rate,
+master volume and all 64 step velocities. Relative sample paths resolve against
+the project directory; external samples are stored as absolute paths. Audio is
+referenced, so move the media together with the JSON to keep a portable project.
+Missing media is reported by `project-info` and does not prevent document loading.
+`project-play` reports the affected track and file before opening an audio stream.
+See [the project format](docs/project-format.md) for editing and storage details.
 
 **OxideDAW** is an independent, general-purpose, cross-platform Digital Audio Workstation built for musicians, producers, sound designers, and composers on Windows and Linux. 
 
@@ -112,7 +134,7 @@ The embedded MCP interface exposes tools that allow AI assistants to manipulate 
 
 ## Development Roadmap
 
-Working implementation plan and handoff notes (Russian): [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). This document records the inspected implementation state, MVP scope, and next steps; the phases below describe the broader vision.
+Implementation status and development roadmap (Russian): [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). This document records the inspected implementation state, MVP scope, and next steps; the phases below describe the broader vision.
 
 ### Phase 1: Engine Foundation
 - [x] Initialize Cargo workspace structure.

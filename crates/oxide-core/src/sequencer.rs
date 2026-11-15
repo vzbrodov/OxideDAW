@@ -1,15 +1,56 @@
 //! Fixed-size 4/4 step sequencer. Scheduling uses absolute sample positions so
 //! rounding never accumulates from one step or loop to the next.
+use serde::{Deserialize, Serialize};
 pub const TRACKS: usize = 4;
 pub const STEPS: usize = 16;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "PatternData")]
 pub struct Pattern {
     /// Zero means no trigger; other values are MIDI-style velocities (1..=127).
     steps: [[u8; STEPS]; TRACKS],
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PatternData {
+    steps: [[u8; STEPS]; TRACKS],
+}
+
+impl TryFrom<PatternData> for Pattern {
+    type Error = &'static str;
+
+    fn try_from(data: PatternData) -> Result<Self, Self::Error> {
+        if data.steps.iter().flatten().any(|&velocity| velocity > 127) {
+            return Err("Pattern velocities must be between 0 and 127");
+        }
+        Ok(Self { steps: data.steps })
+    }
+}
+
 impl Pattern {
+    pub fn get(&self, track: usize, step: usize) -> Option<u8> {
+        self.steps
+            .get(track)
+            .and_then(|steps| steps.get(step))
+            .copied()
+    }
+
+    pub fn drum_demo() -> Self {
+        let mut pattern = Self::default();
+        for step in (0..STEPS).step_by(4) {
+            pattern.steps[0][step] = 127;
+        }
+        for step in [4, 12] {
+            pattern.steps[1][step] = 110;
+        }
+        for step in (0..STEPS).step_by(2) {
+            pattern.steps[2][step] = 80;
+        }
+        pattern.steps[3][14] = 100;
+        pattern
+    }
+
     pub fn set(&mut self, track: usize, step: usize, velocity: u8) -> Result<(), &'static str> {
         if track >= TRACKS || step >= STEPS || velocity > 127 {
             return Err("Invalid track, step or velocity");

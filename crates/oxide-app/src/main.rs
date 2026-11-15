@@ -1,8 +1,24 @@
-//! CLI audio prototype. All decoding happens before starting the stream.
+//! CLI audio prototype. All project I/O and decoding precede audio playback.
 use oxide_audio::playback::{output_devices, Playback};
-use oxide_core::sequencer::{Pattern, STEPS};
+use oxide_core::{
+    sequencer::{Pattern, TRACKS},
+    Project,
+};
 use oxide_dsp::sample::AudioSample;
 use std::{io, path::Path, sync::atomic::Ordering};
+
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+const HELP: &str = "Usage:
+  oxide-app devices
+  oxide-app play <file.wav> [volume: 0..1] [device name]
+  oxide-app pattern <kick.wav> <snare.wav> <hat.wav> <perc.wav> [bpm] [volume: 0..1] [device name]
+  oxide-app project-new <project.oxide.json> <kick.wav> <snare.wav> <hat.wav> <perc.wav> [bpm] [volume: 0..1]
+  oxide-app project-info <project.oxide.json>
+  oxide-app project-play <project.oxide.json> [device name]
+pattern and project-new use a preset 16-step beat. Default BPM: 120, volume: 0.5.
+play runs once, then outputs silence; patterns loop. Enter stops playback.
+project-new refuses to overwrite an existing file. Media is referenced, not copied.";
 
 fn main() {
     if let Err(error) = run() {
@@ -11,44 +27,169 @@ fn main() {
     }
 }
 
-fn run() -> Result<(), Box<dyn std::error::Error>> {
+fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("devices") if args.len() == 1 => {
-            for name in output_devices()? { println!("{name}"); }
+            for name in output_devices()? {
+                println!("{name}");
+            }
         }
         Some("play") if (2..=4).contains(&args.len()) => {
-            let volume = args.get(2).map(|s| s.parse::<f32>()).transpose()?.unwrap_or(0.5);
+            let volume = args
+                .get(2)
+                .map(|s| s.parse::<f32>())
+                .transpose()?
+                .unwrap_or(0.5);
             let sample = AudioSample::load(Path::new(&args[1]))?;
-            println!("{} Hz, {} channels. Press Enter to stop.", sample.sample_rate, sample.channels);
             let playback = Playback::start(sample, args.get(3).map(String::as_str), volume)?;
+            println!("Playing {}. Press Enter to stop.", args[1]);
             wait_for_stop(playback)?;
         }
         Some("pattern") if (5..=8).contains(&args.len()) => {
-            let bpm = args.get(5).map(|s| s.parse::<f64>()).transpose()?.unwrap_or(120.0);
-            let volume = args.get(6).map(|s| s.parse::<f32>()).transpose()?.unwrap_or(0.5);
-            let samples = [
-                AudioSample::load(Path::new(&args[1]))?,
-                AudioSample::load(Path::new(&args[2]))?,
-                AudioSample::load(Path::new(&args[3]))?,
-                AudioSample::load(Path::new(&args[4]))?,
-            ];
-            let mut pattern = Pattern::default();
-            for step in (0..STEPS).step_by(4) { pattern.set(0, step, 127)?; }
-            for step in [4, 12] { pattern.set(1, step, 110)?; }
-            for step in (0..STEPS).step_by(2) { pattern.set(2, step, 80)?; }
-            pattern.set(3, 14, 100)?;
-            let playback = Playback::start_pattern(samples, pattern, bpm, args.get(7).map(String::as_str), volume)?;
+            let bpm = args
+                .get(5)
+                .map(|s| s.parse::<f64>())
+                .transpose()?
+                .unwrap_or(120.0);
+            let volume = args
+                .get(6)
+                .map(|s| s.parse::<f32>())
+                .transpose()?
+                .unwrap_or(0.5);
+            let samples = load_samples(&args[1..5])?;
+            let playback = Playback::start_pattern(
+                samples,
+                Pattern::drum_demo(),
+                bpm,
+                args.get(7).map(String::as_str),
+                volume,
+            )?;
             println!("Four-track demo pattern at {bpm} BPM. Press Enter to stop.");
             wait_for_stop(playback)?;
         }
-        Some("--help") | None => println!("Usage:\n  oxide-app devices\n  oxide-app play <file.wav> [volume: 0..1] [device name]\n  oxide-app pattern <kick.wav> <snare.wav> <hat.wav> <perc.wav> [bpm] [volume: 0..1] [device name]\nPattern loops a preset 16-step beat. Default BPM: 120.\nplay runs once, then outputs silence. pattern loops. Enter stops either. Default volume: 0.5."),
+        Some("project-new") if (6..=8).contains(&args.len()) => {
+            let path = Path::new(&args[1]);
+            if path.try_exists()? {
+                return Err("Project already exists; choose another file name".into());
+            }
+            let mut project = Project {
+                name: path
+                    .file_stem()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("Untitled Project")
+                    .into(),
+                bpm: args
+                    .get(6)
+                    .map(|s| s.parse::<f64>())
+                    .transpose()?
+                    .unwrap_or(120.0),
+                master_volume: args
+                    .get(7)
+                    .map(|s| s.parse::<f32>())
+                    .transpose()?
+                    .unwrap_or(0.5),
+                pattern: Pattern::drum_demo(),
+                ..Project::default()
+            };
+            project.validate()?;
+            // Validate decodability before publishing a new project file.
+            let _ = load_samples(&args[2..6])?;
+            for (index, name) in ["Kick", "Snare", "Hi-hat", "Percussion"].iter().enumerate() {
+                project.tracks[index].name = (*name).into();
+                project.set_sample_path(path, index, Path::new(&args[index + 2]))?;
+            }
+            project.save_new(path)?;
+            println!("Saved {}", path.display());
+        }
+        Some("project-info") if args.len() == 2 => {
+            let path = Path::new(&args[1]);
+            let project = Project::load(path)?;
+            println!(
+                "{} — {} BPM, {} Hz, volume {} (format v{})",
+                project.name,
+                project.bpm,
+                project.sample_rate,
+                project.master_volume,
+                project.format_version
+            );
+            for (index, track) in project.tracks.iter().enumerate() {
+                let media = match &track.sample {
+                    Some(_) => {
+                        let media = project.sample_path(path, index)?;
+                        let status = if media.is_file() {
+                            "available"
+                        } else {
+                            "missing"
+                        };
+                        format!("{} ({status})", media.display())
+                    }
+                    None => "unassigned".into(),
+                };
+                println!("Track {}: {} — {media}", track.id, track.name);
+            }
+        }
+        Some("project-play") if (2..=3).contains(&args.len()) => {
+            let path = Path::new(&args[1]);
+            let project = Project::load(path)?;
+            let samples = load_project_samples(&project, path)?;
+            let playback = Playback::start_pattern(
+                samples,
+                project.pattern,
+                project.bpm,
+                args.get(2).map(String::as_str),
+                project.master_volume,
+            )?;
+            println!(
+                "Playing {} at {} BPM. Press Enter to stop.",
+                project.name, project.bpm
+            );
+            wait_for_stop(playback)?;
+        }
+        Some("--help") if args.len() == 1 => println!("{HELP}"),
+        None => println!("{HELP}"),
         _ => return Err("Invalid arguments. Run with --help".into()),
     }
     Ok(())
 }
 
-fn wait_for_stop(playback: Playback) -> Result<(), Box<dyn std::error::Error>> {
+fn load_samples(paths: &[String]) -> Result<[AudioSample; TRACKS]> {
+    let samples: Vec<_> = paths
+        .iter()
+        .map(|path| {
+            AudioSample::load(Path::new(path))
+                .map_err(|error| format!("Cannot load sample {path}: {error}").into())
+        })
+        .collect::<Result<_>>()?;
+    samples
+        .try_into()
+        .map_err(|_| "Expected four samples".into())
+}
+
+fn load_project_samples(project: &Project, path: &Path) -> Result<[AudioSample; TRACKS]> {
+    let samples: Vec<_> = project
+        .tracks
+        .iter()
+        .enumerate()
+        .map(|(index, track)| {
+            let sample_path = project.sample_path(path, index)?;
+            AudioSample::load(&sample_path).map_err(|error| {
+                format!(
+                    "Track {} ({}): cannot load {}: {error}",
+                    track.id,
+                    track.name,
+                    sample_path.display()
+                )
+                .into()
+            })
+        })
+        .collect::<Result<_>>()?;
+    samples
+        .try_into()
+        .map_err(|_| "Expected four samples".into())
+}
+
+fn wait_for_stop(playback: Playback) -> Result<()> {
     // Keep stream ownership on this thread while input waits elsewhere.
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
