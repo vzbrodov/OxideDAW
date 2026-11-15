@@ -1,4 +1,5 @@
 //! CLI audio prototype. All project I/O and decoding precede audio playback.
+mod editor;
 use oxide_audio::playback::{output_devices, Playback};
 use oxide_core::{
     sequencer::{Pattern, TRACKS},
@@ -16,6 +17,7 @@ const HELP: &str = "Usage:
   oxide-app project-new <project.oxide.json> <kick.wav> <snare.wav> <hat.wav> <perc.wav> [bpm] [volume: 0..1]
   oxide-app project-info <project.oxide.json>
   oxide-app project-play <project.oxide.json> [device name]
+  oxide-app project-edit <project.oxide.json>
 pattern and project-new use a preset 16-step beat. Default BPM: 120, volume: 0.5.
 play runs once, then outputs silence; patterns loop. Enter stops playback.
 project-new refuses to overwrite an existing file. Media is referenced, not copied.";
@@ -146,6 +148,7 @@ fn run() -> Result<()> {
             );
             wait_for_stop(playback)?;
         }
+        Some("project-edit") if args.len() == 2 => editor::run(Path::new(&args[1]))?,
         Some("--help") if args.len() == 1 => println!("{HELP}"),
         None => println!("{HELP}"),
         _ => return Err("Invalid arguments. Run with --help".into()),

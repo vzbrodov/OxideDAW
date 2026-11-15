@@ -2,8 +2,9 @@
 use oxide_core::{sequencer::Pattern, Project};
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -42,6 +43,23 @@ impl Fixture {
         wav.extend(2_u32.to_le_bytes());
         wav.extend(1000_i16.to_le_bytes());
         fs::write(self.0.join("sample.wav"), wav).unwrap();
+    }
+    fn edit(&self, input: &str) -> Output {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_oxide-app"))
+            .args(["project-edit", "beat.oxide.json"])
+            .current_dir(&self.0)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
     }
 }
 impl Drop for Fixture {
@@ -145,5 +163,61 @@ fn invalid_parameters_and_unreadable_samples_do_not_create_a_document() {
             .status
             .code(),
         Some(1)
+    );
+}
+
+#[test]
+fn editor_batches_undo_redo_and_explicit_save_survive_reopening() {
+    let fixture = Fixture::new();
+    let path = fixture.0.join("beat.oxide.json");
+    let original = Project::default();
+    original.save_new(&path).unwrap();
+    let batch = r#"[{"command":"set_bpm","bpm":137.25},{"command":"set_step","track_id":1,"step":15,"velocity":99},{"command":"set_master_volume","volume":0.3},{"command":"set_sample","track_id":1,"sample":"samples/kick.wav"}]"#;
+    let edited = fixture.edit(&format!("{batch}\nundo\nsave\nquit\n"));
+    assert!(
+        edited.status.success(),
+        "{}",
+        String::from_utf8_lossy(&edited.stderr)
+    );
+    assert_eq!(Project::load(&path).unwrap(), original);
+    let edited = fixture.edit(&format!("{batch}\nundo\nredo\nshow\nsave\nquit\n"));
+    assert!(
+        edited.status.success(),
+        "{}",
+        String::from_utf8_lossy(&edited.stderr)
+    );
+    let changed = Project::load(&path).unwrap();
+    assert_eq!(changed.bpm, 137.25);
+    assert_eq!(changed.pattern.get(0, 15), Some(99));
+    assert_eq!(changed.master_volume, 0.3);
+    assert_eq!(changed.tracks[0].sample, Some("samples/kick.wav".into()));
+    // EOF and quit both discard unsaved edits, even after a previous save.
+    for ending in ["", "quit\n"] {
+        assert!(fixture
+            .edit(&format!("{{\"command\":\"set_bpm\",\"bpm\":90}}\n{ending}"))
+            .status
+            .success());
+        assert_eq!(Project::load(&path).unwrap(), changed);
+    }
+}
+
+#[test]
+fn editor_rejects_malformed_and_invalid_batches_without_partial_saves() {
+    let fixture = Fixture::new();
+    let path = fixture.0.join("beat.oxide.json");
+    let original = Project::default();
+    original.save_new(&path).unwrap();
+    let result = fixture.edit(concat!(
+        "{broken\n",
+        "[{\"command\":\"set_bpm\",\"bpm\":90},{\"command\":\"set_step\",\"track_id\":1,\"step\":16,\"velocity\":99}]\n",
+        "save\nquit\n"
+    ));
+    assert_eq!(result.status.code(), Some(1));
+    assert_eq!(Project::load(&path).unwrap(), original);
+    assert_eq!(
+        String::from_utf8_lossy(&result.stderr)
+            .matches("Edit rejected:")
+            .count(),
+        2
     );
 }

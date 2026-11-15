@@ -13,8 +13,9 @@ and one-shot audio playback with volume control. A four-track, 16-step sequencer
 now drives a sampler with eight voices per track, velocity, stereo mixing and
 master volume. The CLI can loop a preset drum pattern from four sample files, save a versioned
 JSON project, inspect it and play it again after reopening.
+The line-oriented project editor supports validated command batches and undo/redo.
 The renderer supports pause, stop and one-shot tail playback; the CLI stops on Enter.
-The workspace builds and 19 tests pass; real audio hardware playback remains
+The workspace builds and 25 tests pass; real audio hardware playback remains
 unverified. The DAW features
 described below are planned, unless explicitly marked complete.
 
@@ -34,8 +35,8 @@ cargo run -p oxide-app -- play /path/to/sample.wav 0.5 "device name"
 `play` runs once and then outputs silence; `pattern` loops until Enter.
 Both commands accept an exact output device name as their final optional argument.
 The demo triggers kick on steps 1/5/9/13, snare on 5/13, hi-hat on odd steps,
-and percussion on step 15. You can edit velocities in saved JSON projects;
-editing commands, undo/redo and live tempo changes remain planned.
+and percussion on step 15. Use `project-edit` to change a saved beat;
+live tempo changes remain planned.
 Overlapping hits use eight voices per track, replacing the oldest hit when full.
 The summed output is hard-clipped to the range -1..1; reduce volume if it distorts.
 The prototype decodes the entire file into memory before starting playback,
@@ -62,6 +63,31 @@ referenced, so move the media together with the JSON to keep a portable project.
 Missing media is reported by `project-info` and does not prevent document loading.
 `project-play` reports the affected track and file before opening an audio stream.
 See [the project format](docs/project-format.md) for editing and storage details.
+
+### Editing a beat
+
+Run `cargo run -p oxide-app -- project-edit beat.oxide.json`, then enter one
+command or JSON array per line. An array applies atomically and undoes as one action:
+
+```text
+{"command":"set_step","track_id":1,"step":0,"velocity":100}
+[{"command":"set_bpm","bpm":128},{"command":"set_master_volume","volume":0.4}]
+{"command":"set_sample","track_id":2,"sample":"samples/snare.wav"}
+undo
+redo
+show
+save
+quit
+```
+
+Track selectors are stable IDs shown by `project-info`; steps are zero-indexed
+(0..15), and velocity 0 disables a step. Sample references resolve against the
+project directory and may point to missing files; use `null` to unassign a sample.
+Only `save` writes the document. `quit` or EOF discards unsaved changes.
+History holds up to 128 actions in memory and is cleared when the editor closes.
+Input may be piped from a script. Rejected lines report errors and leave state
+and history unchanged; later lines still run, and the process exits with code 1
+if any action failed, even if a subsequent `save` succeeded.
 
 **OxideDAW** is an independent, general-purpose, cross-platform Digital Audio Workstation built for musicians, producers, sound designers, and composers on Windows and Linux. 
 

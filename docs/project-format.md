@@ -33,12 +33,34 @@ path when decoding fails. All decoding happens before starting audio playback.
 
 ## Editing
 
-For now, close playback, edit the JSON, and reopen with `project-play`. Change
-`pattern.steps[track][step]` to set a velocity; rows and steps are zero-indexed.
+Close playback, edit with `project-edit`, save, and reopen with `project-play`.
+The editor accepts a JSON command or array per line; arrays are atomic batches.
+`undo`/`redo` restore a whole batch; `show` prints the current document, `save`
+atomically saves it, and `quit` or EOF discards unsaved changes. History is
+session-local, capped at 128 actions, and is not stored in the v1 format.
+
+| Command | Fields |
+| --- | --- |
+| `set_step` | `track_id`, zero-based `step` (0..15), `velocity` (0..127) |
+| `set_bpm` | `bpm` (1..999) |
+| `set_master_volume` | `volume` (0..1) |
+| `set_sample` | `track_id`, `sample` (stored path or `null` to unassign) |
+
+For example: `{"command":"set_step","track_id":1,"step":0,"velocity":100}`.
+Sample references use the same rules as the document; editing does not copy,
+decode or require media. Unknown command fields and IDs are rejected.
+Each command must be valid, including intermediate states within a batch.
+Failed and no-op batches preserve undo/redo history. A new successful edit clears
+redo. The shared Rust API is `oxide_core::edit::{EditCommand, ProjectEditor}`;
+it owns the document and exposes read-only state, keeping changes in history.
+All editing, snapshot allocation and storage happen outside the audio callback.
+
+Direct JSON editing is also supported: change `pattern.steps[track][step]` to set
+a velocity; rows and steps are zero-indexed.
 Track IDs identify the existing slots and should remain stable when renaming.
 A pattern row belongs to its track slot, so moving a track requires moving its
-row as well. There is one looping pattern; clips, arrangement, automation,
-editing commands and undo/redo remain planned.
+row as well. There is one looping pattern; clips, arrangement and automation
+remain planned.
 
 ## Storage guarantees
 

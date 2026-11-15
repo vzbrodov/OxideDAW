@@ -603,6 +603,7 @@ dependencies = [
  "oxide-mcp",
  "oxide-midi",
  "oxide-plugin-sdk",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
