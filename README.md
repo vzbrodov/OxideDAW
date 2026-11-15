@@ -9,10 +9,12 @@
 ### Implementation status
 
 This repository is an early prototype. The CLI now contains device enumeration
-and one-shot audio playback with volume control. The workspace builds and six
-unit tests pass; real audio hardware playback remains unverified. A four-track,
-16-step scheduler with BPM, loop, pause and stop is implemented in `oxide-core`,
-but is not yet connected to sample playback. The DAW features
+and one-shot audio playback with volume control. A four-track, 16-step sequencer
+now drives a sampler with eight voices per track, velocity, stereo mixing and
+master volume. The CLI can loop a preset drum pattern from four sample files.
+The renderer supports pause, stop and one-shot tail playback; the CLI stops on Enter.
+The workspace builds and 12 unit tests pass; real audio hardware playback remains
+unverified. The DAW features
 described below are planned, unless explicitly marked complete.
 
 First development target: Linux. Install a Rust toolchain and the ALSA development
@@ -22,11 +24,18 @@ package (`libasound2-dev` on Debian/Ubuntu or `alsa-lib-devel` on Fedora).
 cargo test --workspace
 cargo run -p oxide-app -- devices
 cargo run -p oxide-app -- play /path/to/sample.wav 0.5
+# Loop the built-in beat (kick, snare, hi-hat, percussion), BPM and master volume:
+cargo run -p oxide-app -- pattern kick.wav snare.wav hat.wav perc.wav 120 0.5
 # Optional exact output device name as the final argument:
 cargo run -p oxide-app -- play /path/to/sample.wav 0.5 "device name"
 ```
 
-Press Enter to stop. Playback runs once and then outputs silence until stopped.
+`play` runs once and then outputs silence; `pattern` loops until Enter.
+Both commands accept an exact output device name as their final optional argument.
+The demo triggers kick on steps 1/5/9/13, snare on 5/13, hi-hat on odd steps,
+and percussion on step 15. Pattern editing and live tempo changes remain planned.
+Overlapping hits use eight voices per track, replacing the oldest hit when full.
+The summed output is hard-clipped to the range -1..1; reduce volume if it distorts.
 The prototype decodes the entire file into memory before starting playback,
 supports mono/stereo input, and uses linear interpolation when sample rates differ.
 It uses the default CPAL host and device configuration; dedicated PipeWire/JACK
@@ -114,7 +123,7 @@ Working implementation plan and handoff notes (Russian): [DEVELOPMENT_PLAN.md](D
 ### Phase 2: Sampler & Step Sequencer
 - [ ] Implement audio sample decoder (WAV, FLAC, MP3, OGG) via `symphonia`.
 - [ ] Build single-shot sampler voice with pitch transposition and volume envelope.
-- [ ] Construct the 16-step grid sequencer state and playback dispatcher.
+- [x] Construct the 16-step grid sequencer state and playback dispatcher (CLI, four tracks).
 
 ### Phase 3: Graphical Interface MVP
 - [ ] Initialize GPU-rendered UI window using `wgpu` and a declarative UI framework.

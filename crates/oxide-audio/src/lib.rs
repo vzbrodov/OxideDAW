@@ -1,4 +1,5 @@
 //! Oxide Audio - Real-time audio engine, driver management, and lock-free rings.
+pub mod pattern;
 pub mod playback;
 
 pub struct AudioEngineConfig {

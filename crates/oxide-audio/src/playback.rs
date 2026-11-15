@@ -1,5 +1,7 @@
 //! Minimal playback with predecoded audio; callback performs no allocation or I/O.
+use crate::pattern::PatternRenderer;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use oxide_core::sequencer::{Pattern, TRACKS};
 use oxide_dsp::sample::AudioSample;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -22,6 +24,49 @@ pub struct Playback {
 
 impl Playback {
     pub fn start(sample: AudioSample, device_name: Option<&str>, volume: f32) -> Result<Self> {
+        sample.validate()?;
+        Self::start_source(
+            device_name,
+            move |rate| {
+                Ok(Source::Sample(Renderer {
+                    sample,
+                    position: 0.0,
+                    rate,
+                    volume,
+                }))
+            },
+            volume,
+        )
+    }
+
+    pub fn start_pattern(
+        samples: [AudioSample; TRACKS],
+        pattern: Pattern,
+        bpm: f64,
+        device_name: Option<&str>,
+        volume: f32,
+    ) -> Result<Self> {
+        for sample in &samples {
+            sample.validate()?;
+        }
+        // Validate tempo before device enumeration.
+        oxide_core::sequencer::Transport::new(48000, bpm)?;
+        Self::start_source(
+            device_name,
+            move |rate| {
+                let mut renderer = PatternRenderer::new(samples, pattern, rate, bpm, volume)?;
+                renderer.play();
+                Ok(Source::Pattern(Box::new(renderer)))
+            },
+            volume,
+        )
+    }
+
+    fn start_source(
+        device_name: Option<&str>,
+        create: impl FnOnce(u32) -> Result<Source>,
+        volume: f32,
+    ) -> Result<Self> {
         if !volume.is_finite() || !(0.0..=1.0).contains(&volume) {
             return Err("Volume must be between 0 and 1".into());
         }
@@ -38,17 +83,12 @@ impl Playback {
         if config.channels == 0 || config.sample_rate.0 == 0 {
             return Err("Invalid device configuration".into());
         }
+        let source = create(config.sample_rate.0)?;
         let failed = Arc::new(AtomicBool::new(false));
         let stream = match supported.sample_format() {
-            cpal::SampleFormat::F32 => {
-                build::<f32>(&device, &config, sample, volume, failed.clone())?
-            }
-            cpal::SampleFormat::I16 => {
-                build::<i16>(&device, &config, sample, volume, failed.clone())?
-            }
-            cpal::SampleFormat::U16 => {
-                build::<u16>(&device, &config, sample, volume, failed.clone())?
-            }
+            cpal::SampleFormat::F32 => build::<f32>(&device, &config, source, failed.clone())?,
+            cpal::SampleFormat::I16 => build::<i16>(&device, &config, source, failed.clone())?,
+            cpal::SampleFormat::U16 => build::<u16>(&device, &config, source, failed.clone())?,
             format => return Err(format!("Unsupported device sample format: {format}").into()),
         };
         stream.play()?;
@@ -62,33 +102,33 @@ impl Playback {
 fn build<T: cpal::SizedSample + cpal::FromSample<f32>>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
-    sample: AudioSample,
-    volume: f32,
+    mut source: Source,
     failed: Arc<AtomicBool>,
 ) -> Result<cpal::Stream> {
     let channels = config.channels as usize;
-    let mut renderer = Renderer {
-        sample,
-        position: 0.0,
-        rate: config.sample_rate.0,
-        volume,
-    };
     Ok(device.build_output_stream(
         config,
         move |data: &mut [T], _| {
-            for frame in data.chunks_mut(channels) {
-                let (left, right) = renderer.next_frame();
-                for (channel, output) in frame.iter_mut().enumerate() {
-                    let value = if channels == 1 {
-                        (left + right) * 0.5
-                    } else {
-                        match channel {
-                            0 => left,
-                            1 => right,
-                            _ => 0.0,
-                        }
-                    };
-                    *output = T::from_sample(value);
+            // Bounded stack scratch, independent of backend callback size.
+            let mut scratch = [[0.0; 2]; 256];
+            for block in data.chunks_mut(channels * scratch.len()) {
+                let frames = block.len() / channels;
+                source.render(&mut scratch[..frames]);
+                for (frame, &[left, right]) in
+                    block.chunks_exact_mut(channels).zip(&scratch[..frames])
+                {
+                    for (channel, output) in frame.iter_mut().enumerate() {
+                        let value = if channels == 1 {
+                            (left + right) * 0.5
+                        } else {
+                            match channel {
+                                0 => left,
+                                1 => right,
+                                _ => 0.0,
+                            }
+                        };
+                        *output = T::from_sample(value);
+                    }
                 }
             }
         },
@@ -97,6 +137,25 @@ fn build<T: cpal::SizedSample + cpal::FromSample<f32>>(
         },
         None,
     )?)
+}
+
+enum Source {
+    Sample(Renderer),
+    Pattern(Box<PatternRenderer>),
+}
+
+impl Source {
+    fn render(&mut self, output: &mut [[f32; 2]]) {
+        match self {
+            Self::Sample(renderer) => {
+                for frame in output {
+                    let (left, right) = renderer.next_frame();
+                    *frame = [left, right];
+                }
+            }
+            Self::Pattern(renderer) => renderer.render(output),
+        }
+    }
 }
 
 struct Renderer {

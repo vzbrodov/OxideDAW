@@ -14,6 +14,17 @@ pub struct AudioSample {
 }
 
 impl AudioSample {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.samples.is_empty()
+            || self.sample_rate == 0
+            || !(1..=2).contains(&self.channels)
+            || !self.samples.len().is_multiple_of(self.channels)
+        {
+            return Err("Expected non-empty complete mono or stereo audio frames");
+        }
+        Ok(())
+    }
+
     pub fn load(path: &Path) -> SampleResult<Self> {
         let source = MediaSourceStream::new(Box::new(File::open(path)?), Default::default());
         let mut hint = Hint::new();
@@ -59,12 +70,7 @@ impl AudioSample {
             buffer.copy_interleaved_ref(decoded);
             result.samples.extend_from_slice(buffer.samples());
         }
-        if result.samples.is_empty()
-            || result.sample_rate == 0
-            || !(1..=2).contains(&result.channels)
-        {
-            return Err("Expected non-empty mono or stereo audio".into());
-        }
+        result.validate()?;
         Ok(result)
     }
 }
