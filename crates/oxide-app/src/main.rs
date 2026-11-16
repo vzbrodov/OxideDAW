@@ -1,4 +1,5 @@
 //! CLI audio prototype. All project I/O and decoding precede audio playback.
+mod controls;
 mod editor;
 use oxide_audio::playback::{output_devices, Playback};
 use oxide_core::{
@@ -6,7 +7,11 @@ use oxide_core::{
     Project,
 };
 use oxide_dsp::sample::AudioSample;
-use std::{io, path::Path, sync::atomic::Ordering};
+use std::{
+    io::{self, BufRead},
+    path::Path,
+    sync::atomic::Ordering,
+};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -20,6 +25,7 @@ const HELP: &str = "Usage:
   oxide-app project-edit <project.oxide.json>
 pattern and project-new use a preset 16-step beat. Default BPM: 120, volume: 0.5.
 play runs once, then outputs silence; patterns loop. Enter stops playback.
+Pattern controls: play, pause, stop, bpm <1..999>, seek <0..15>, quit.
 project-new refuses to overwrite an existing file. Media is referenced, not copied.";
 
 fn main() {
@@ -46,7 +52,7 @@ fn run() -> Result<()> {
             let sample = AudioSample::load(Path::new(&args[1]))?;
             let playback = Playback::start(sample, args.get(3).map(String::as_str), volume)?;
             println!("Playing {}. Press Enter to stop.", args[1]);
-            wait_for_stop(playback)?;
+            wait_for_stop(playback, false)?;
         }
         Some("pattern") if (5..=8).contains(&args.len()) => {
             let bpm = args
@@ -67,8 +73,8 @@ fn run() -> Result<()> {
                 args.get(7).map(String::as_str),
                 volume,
             )?;
-            println!("Four-track demo pattern at {bpm} BPM. Press Enter to stop.");
-            wait_for_stop(playback)?;
+            println!("Four-track demo pattern at {bpm} BPM. Controls: play, pause, stop, bpm N, seek N; Enter quits.");
+            wait_for_stop(playback, true)?;
         }
         Some("project-new") if (6..=8).contains(&args.len()) => {
             let path = Path::new(&args[1]);
@@ -143,10 +149,10 @@ fn run() -> Result<()> {
                 project.master_volume,
             )?;
             println!(
-                "Playing {} at {} BPM. Press Enter to stop.",
+                "Playing {} at {} BPM. Controls: play, pause, stop, bpm N, seek N; Enter quits.",
                 project.name, project.bpm
             );
-            wait_for_stop(playback)?;
+            wait_for_stop(playback, true)?;
         }
         Some("project-edit") if args.len() == 2 => editor::run(Path::new(&args[1]))?,
         Some("--help") if args.len() == 1 => println!("{HELP}"),
@@ -192,25 +198,44 @@ fn load_project_samples(project: &Project, path: &Path) -> Result<[AudioSample; 
         .map_err(|_| "Expected four samples".into())
 }
 
-fn wait_for_stop(playback: Playback) -> Result<()> {
+fn wait_for_stop(mut playback: Playback, pattern: bool) -> Result<()> {
     // Keep stream ownership on this thread while input waits elsewhere.
-    let (sender, receiver) = std::sync::mpsc::channel();
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
     std::thread::spawn(move || {
-        let result = io::stdin().read_line(&mut String::new());
-        let _ = sender.send(result);
+        for line in io::stdin().lock().lines() {
+            let finished = line.as_ref().map_or(true, |line| {
+                !pattern || line.trim().is_empty() || line.trim() == "quit"
+            });
+            if sender.send(line).is_err() || finished {
+                break;
+            }
+        }
     });
+    let mut rejected = false;
     loop {
         if playback.failed.load(Ordering::Relaxed) {
             return Err("Audio stream failed (device disconnected or backend error)".into());
         }
         match receiver.recv_timeout(std::time::Duration::from_millis(50)) {
             Ok(result) => {
-                result?;
-                break;
+                let line = result?;
+                if !pattern || line.trim().is_empty() || line.trim() == "quit" {
+                    break;
+                }
+                let result = controls::parse(&line)
+                    .map_err(Into::into)
+                    .and_then(|command| playback.command(command));
+                if let Err(error) = result {
+                    eprintln!("Playback command rejected: {error}");
+                    rejected = true;
+                }
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-            Err(error) => return Err(error.into()),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         }
+    }
+    if rejected {
+        return Err("One or more playback commands were rejected".into());
     }
     Ok(())
 }

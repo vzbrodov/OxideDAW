@@ -73,6 +73,8 @@ pub struct Transport {
     bpm: f64,
     position: u64,
     next_step: u64,
+    anchor_step: f64,
+    anchor_frame: u64,
     playing: bool,
     looping: bool,
 }
@@ -91,6 +93,8 @@ impl Transport {
             bpm,
             position: 0,
             next_step: 0,
+            anchor_step: 0.0,
+            anchor_frame: 0,
             playing: false,
             looping: true,
         })
@@ -106,6 +110,8 @@ impl Transport {
         self.playing = false;
         self.position = 0;
         self.next_step = 0;
+        self.anchor_step = 0.0;
+        self.anchor_frame = 0;
     }
     pub fn set_looping(&mut self, looping: bool) {
         self.looping = looping;
@@ -117,8 +123,42 @@ impl Transport {
         self.playing
     }
 
+    /// Change tempo without moving the playhead in musical time or retriggering hits.
+    /// Already sounding samples keep their original playback rate.
+    pub fn set_bpm(&mut self, bpm: f64) -> Result<(), &'static str> {
+        Self::new(self.sample_rate, bpm)?;
+        if bpm == self.bpm {
+            return Ok(());
+        }
+        self.anchor_step = if self.step_frame(self.next_step) == self.position {
+            self.next_step as f64
+        } else {
+            self.anchor_step
+                + (self.position as f64 - self.anchor_frame as f64) * self.bpm
+                    / (self.sample_rate as f64 * 15.0)
+        };
+        self.anchor_frame = self.position;
+        self.bpm = bpm;
+        Ok(())
+    }
+
+    /// Jump to a zero-indexed step in the current pattern, preserving play/pause.
+    /// The destination triggers on the next nonempty block after playback resumes.
+    pub fn seek_step(&mut self, step: usize) -> Result<(), &'static str> {
+        if step >= STEPS {
+            return Err("Step must be between 0 and 15");
+        }
+        self.position = (step as f64 * self.sample_rate as f64 * 15.0 / self.bpm).round() as u64;
+        self.anchor_frame = self.position;
+        self.anchor_step = step as f64;
+        self.next_step = step as u64;
+        Ok(())
+    }
+
     fn step_frame(&self, step: u64) -> u64 {
-        (step as f64 * self.sample_rate as f64 * 15.0 / self.bpm).round() as u64
+        (self.anchor_frame as f64
+            + (step as f64 - self.anchor_step) * self.sample_rate as f64 * 15.0 / self.bpm)
+            .round() as u64
     }
 
     /// Emit events for [position, position + frames). Caller supplies the sink;
@@ -141,7 +181,7 @@ impl Transport {
                         track,
                         step,
                         velocity,
-                        offset: (frame - self.position) as usize,
+                        offset: frame.saturating_sub(self.position) as usize,
                     });
                 }
             }
@@ -231,6 +271,107 @@ mod tests {
         assert_eq!(clock.position(), 96000);
         assert!(!clock.is_playing());
     }
+    #[test]
+    fn tempo_change_preserves_phase_and_pending_boundary() {
+        let mut clock = Transport::new(48000, 120.0).unwrap();
+        clock.play();
+        clock.process(3000, &pattern(), |_| {});
+        clock.set_bpm(240.0).unwrap();
+        assert_eq!(clock.position(), 3000);
+        let mut events = Vec::new();
+        clock.process(1501, &pattern(), |event| events.push(event));
+        assert_eq!(events.len(), 4);
+        assert_eq!(events[0].step, 1);
+        assert_eq!(events[0].offset, 1500);
+        // Changing tempo exactly at a pending boundary emits it once at offset zero.
+        clock.seek_step(4).unwrap();
+        clock.set_bpm(90.0).unwrap();
+        events.clear();
+        clock.process(1, &pattern(), |event| events.push(event));
+        assert_eq!(events.len(), 4);
+        assert_eq!((events[0].step, events[0].offset), (4, 0));
+        clock.set_bpm(120.0).unwrap();
+        clock.process(1, &pattern(), |_| panic!("duplicate trigger"));
+    }
+
+    #[test]
+    fn tempo_change_keeps_rounded_boundary_due_and_rejects_too_fast_tempo() {
+        let mut clock = Transport::new(48000, 137.0).unwrap();
+        clock.play();
+        let boundary = clock.step_frame(1);
+        clock.process(boundary as usize, &pattern(), |_| {});
+        clock.set_bpm(1.0).unwrap();
+        let mut events = Vec::new();
+        clock.process(1, &pattern(), |event| events.push(event));
+        assert_eq!(events.len(), 4);
+        assert_eq!((events[0].step, events[0].offset), (1, 0));
+        let mut slow = Transport::new(8, 120.0).unwrap();
+        assert!(slow.set_bpm(121.0).is_err());
+        slow.play();
+        let mut steps = Vec::new();
+        slow.process(2, &pattern(), |event| steps.push(event.step));
+        assert_eq!(steps, vec![0, 0, 0, 0, 1, 1, 1, 1]);
+    }
+
+    #[test]
+    fn changed_tempo_is_independent_of_block_sizes() {
+        fn after_change(chunks: &[usize]) -> Vec<(u64, usize, usize)> {
+            let mut clock = Transport::new(48000, 137.0).unwrap();
+            clock.play();
+            clock.process(12345, &pattern(), |_| {});
+            clock.set_bpm(173.25).unwrap();
+            let mut events = Vec::new();
+            for &frames in chunks {
+                let start = clock.position();
+                clock.process(frames, &pattern(), |event| {
+                    events.push((start + event.offset as u64, event.track, event.step));
+                });
+            }
+            events
+        }
+        assert_eq!(after_change(&[1_000_000]), after_change(&[1000; 1000]));
+    }
+
+    #[test]
+    fn one_shot_end_follows_live_tempo_change() {
+        let mut clock = Transport::new(48000, 120.0).unwrap();
+        clock.set_looping(false);
+        clock.play();
+        clock.process(45000, &pattern(), |_| {});
+        clock.set_bpm(60.0).unwrap();
+        let mut steps = Vec::new();
+        clock.process(200000, &pattern(), |event| steps.push(event.step));
+        assert_eq!(steps.len(), 32);
+        assert!(steps.iter().all(|&step| (8..16).contains(&step)));
+        assert_eq!(clock.position(), 147000);
+        assert!(!clock.is_playing());
+    }
+
+    #[test]
+    fn seek_preserves_pause_and_one_shot_end() {
+        let mut clock = Transport::new(48000, 120.0).unwrap();
+        clock.set_looping(false);
+        clock.seek_step(15).unwrap();
+        assert!(!clock.is_playing());
+        clock.process(10, &pattern(), |_| panic!("stopped"));
+        clock.play();
+        let mut steps = Vec::new();
+        clock.process(12000, &pattern(), |event| steps.push(event.step));
+        assert_eq!(steps, vec![15; 4]);
+        assert_eq!(clock.position(), 96000);
+        assert!(!clock.is_playing());
+        clock.seek_step(0).unwrap();
+        clock.set_bpm(60.0).unwrap();
+        clock.play();
+        clock.process(1, &pattern(), |event| assert_eq!(event.step, 0));
+        clock.pause();
+        let before = clock.position();
+        assert!(clock.seek_step(16).is_err());
+        assert!(clock.set_bpm(f64::NAN).is_err());
+        assert_eq!(clock.position(), before);
+        assert!(!clock.is_playing());
+    }
+
     #[test]
     fn rejects_invalid_configuration() {
         for bpm in [0.0, f64::NAN, f64::INFINITY, 1000.0] {

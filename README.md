@@ -14,8 +14,9 @@ now drives a sampler with eight voices per track, velocity, stereo mixing and
 master volume. The CLI can loop a preset drum pattern from four sample files, save a versioned
 JSON project, inspect it and play it again after reopening.
 The line-oriented project editor supports validated command batches and undo/redo.
-The renderer supports pause, stop and one-shot tail playback; the CLI stops on Enter.
-The workspace builds and 25 tests pass; real audio hardware playback remains
+The renderer supports pause, stop, step seeking, live tempo changes and one-shot tail playback.
+Pattern playback accepts transport commands; Enter quits.
+The workspace builds and 34 tests pass; real audio hardware playback remains
 unverified. The DAW features
 described below are planned, unless explicitly marked complete.
 
@@ -36,13 +37,36 @@ cargo run -p oxide-app -- play /path/to/sample.wav 0.5 "device name"
 Both commands accept an exact output device name as their final optional argument.
 The demo triggers kick on steps 1/5/9/13, snare on 5/13, hi-hat on odd steps,
 and percussion on step 15. Use `project-edit` to change a saved beat;
-live tempo changes remain planned.
+use `bpm N` during pattern playback to change its tempo.
 Overlapping hits use eight voices per track, replacing the oldest hit when full.
 The summed output is hard-clipped to the range -1..1; reduce volume if it distorts.
 The prototype decodes the entire file into memory before starting playback,
 supports mono/stereo input, and uses linear interpolation when sample rates differ.
 It uses the default CPAL host and device configuration; dedicated PipeWire/JACK
 integration, latency controls, and production-quality resampling remain planned.
+
+During `pattern` or `project-play`, enter one control per line:
+
+```text
+pause
+seek 8
+bpm 137.25
+play
+stop
+play
+quit
+```
+
+`seek` selects step 0..15, cuts existing sample tails, and preserves play/pause.
+The destination triggers when playback resumes. `bpm` accepts 1..999 and preserves
+musical position; sounding samples keep their playback rate. `pause` freezes
+sample tails, and `stop` clears them and resets to step 0. Enter, `quit`, or EOF
+ends playback. These controls affect this playback session; they do not save changes
+to the project. Invalid commands are reported without stopping subsequent input;
+the CLI exits with code 1 if any command was rejected.
+
+Controls pass through a bounded FIFO of 64 messages and take effect at the next
+audio callback. A full queue rejects the new control with a retry message.
 
 ### Saving and reopening a beat
 

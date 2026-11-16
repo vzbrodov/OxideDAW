@@ -79,6 +79,9 @@ impl PatternRenderer {
     pub fn stop(&mut self) {
         self.transport.stop();
         self.paused = false;
+        self.clear_voices();
+    }
+    fn clear_voices(&mut self) {
         for track in &mut self.tracks {
             track.voices.fill(SamplerVoice::default());
             track.next_voice = 0;
@@ -86,6 +89,17 @@ impl PatternRenderer {
     }
     pub fn set_looping(&mut self, looping: bool) {
         self.transport.set_looping(looping);
+    }
+
+    pub fn set_bpm(&mut self, bpm: f64) -> Result<(), &'static str> {
+        self.transport.set_bpm(bpm)
+    }
+
+    /// Seeking cuts existing tails; it never starts a paused/stopped transport.
+    pub fn seek_step(&mut self, step: usize) -> Result<(), &'static str> {
+        self.transport.seek_step(step)?;
+        self.clear_voices();
+        Ok(())
     }
 
     /// Render stereo frames, placing triggers at their exact offsets in this block.
@@ -232,6 +246,49 @@ mod tests {
         renderer.render(&mut tail);
         assert_eq!(&tail[..2], &[[0.5; 2]; 2]);
         assert!(tail[2..].iter().all(|frame| *frame == [0.0; 2]));
+    }
+
+    #[test]
+    fn seeking_cuts_tails_and_preserves_paused_state() {
+        let mut pattern = Pattern::default();
+        pattern.set(0, 0, 127).unwrap();
+        pattern.set(0, 4, 64).unwrap();
+        let mut renderer = renderer(&[0.25; 32], pattern);
+        let mut output = [[0.0; 2]; 1];
+        renderer.render(&mut output);
+        assert_eq!(output[0], [0.25; 2]);
+        assert!(renderer.seek_step(16).is_err());
+        renderer.render(&mut output);
+        assert_eq!(output[0], [0.25; 2]);
+        renderer.seek_step(3).unwrap();
+        renderer.render(&mut output);
+        assert_eq!(output[0], [0.0; 2]);
+        renderer.pause();
+        renderer.seek_step(4).unwrap();
+        renderer.set_bpm(60.0).unwrap();
+        renderer.render(&mut output);
+        assert_eq!(output[0], [0.0; 2]);
+        renderer.play();
+        renderer.render(&mut output);
+        assert_eq!(output[0], [0.25 * 64.0 / 127.0; 2]);
+        renderer.stop();
+        renderer.play();
+        renderer.render(&mut output);
+        assert_eq!(output[0], [0.25; 2]);
+    }
+
+    #[test]
+    fn tempo_change_preserves_sample_tails_and_retimes_next_hit() {
+        let mut pattern = Pattern::default();
+        pattern.set(0, 0, 127).unwrap();
+        pattern.set(0, 2, 127).unwrap();
+        let mut renderer = renderer(&[0.25; 32], pattern);
+        let mut output = [[0.0; 2]; 1];
+        renderer.render(&mut output);
+        renderer.set_bpm(60.0).unwrap();
+        let mut output = [[0.0; 2]; 4];
+        renderer.render(&mut output);
+        assert_eq!(output, [[0.25; 2], [0.25; 2], [0.5; 2], [0.5; 2]]);
     }
 
     #[test]

@@ -3,10 +3,26 @@ use crate::pattern::PatternRenderer;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use oxide_core::sequencer::{Pattern, TRACKS};
 use oxide_dsp::sample::AudioSample;
+use ringbuf::{
+    traits::{Consumer, Producer, Split},
+    HeapCons, HeapProd, HeapRb,
+};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
+
+const COMMAND_CAPACITY: usize = 64;
+
+/// Small, allocation-free messages applied in FIFO order at audio callback boundaries.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PlaybackCommand {
+    Play,
+    Pause,
+    Stop,
+    SeekStep(usize),
+    SetBpm(f64),
+}
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -20,9 +36,32 @@ pub fn output_devices() -> Result<Vec<String>> {
 pub struct Playback {
     _stream: cpal::Stream,
     pub failed: Arc<AtomicBool>,
+    commands: HeapProd<PlaybackCommand>,
+    sample_rate: u32,
+    pattern: bool,
 }
 
 impl Playback {
+    /// Queue a pattern control without blocking. A full queue rejects the new command;
+    /// callers can retry later. Successful enqueue does not mean it was rendered yet.
+    pub fn command(&mut self, command: PlaybackCommand) -> Result<()> {
+        if !self.pattern {
+            return Err("Transport commands require pattern playback".into());
+        }
+        match command {
+            PlaybackCommand::SetBpm(bpm) => {
+                oxide_core::sequencer::Transport::new(self.sample_rate, bpm)?;
+            }
+            PlaybackCommand::SeekStep(step) if step >= oxide_core::sequencer::STEPS => {
+                return Err("Step must be between 0 and 15".into());
+            }
+            _ => {}
+        }
+        self.commands
+            .try_push(command)
+            .map_err(|_| "Playback command queue is full; retry later".into())
+    }
+
     pub fn start(sample: AudioSample, device_name: Option<&str>, volume: f32) -> Result<Self> {
         sample.validate()?;
         Self::start_source(
@@ -84,17 +123,28 @@ impl Playback {
             return Err("Invalid device configuration".into());
         }
         let source = create(config.sample_rate.0)?;
+        let pattern = matches!(&source, Source::Pattern(_));
+        let (commands, consumer) = HeapRb::new(COMMAND_CAPACITY).split();
         let failed = Arc::new(AtomicBool::new(false));
         let stream = match supported.sample_format() {
-            cpal::SampleFormat::F32 => build::<f32>(&device, &config, source, failed.clone())?,
-            cpal::SampleFormat::I16 => build::<i16>(&device, &config, source, failed.clone())?,
-            cpal::SampleFormat::U16 => build::<u16>(&device, &config, source, failed.clone())?,
+            cpal::SampleFormat::F32 => {
+                build::<f32>(&device, &config, source, consumer, failed.clone())?
+            }
+            cpal::SampleFormat::I16 => {
+                build::<i16>(&device, &config, source, consumer, failed.clone())?
+            }
+            cpal::SampleFormat::U16 => {
+                build::<u16>(&device, &config, source, consumer, failed.clone())?
+            }
             format => return Err(format!("Unsupported device sample format: {format}").into()),
         };
         stream.play()?;
         Ok(Self {
             _stream: stream,
             failed,
+            commands,
+            sample_rate: config.sample_rate.0,
+            pattern,
         })
     }
 }
@@ -103,12 +153,14 @@ fn build<T: cpal::SizedSample + cpal::FromSample<f32>>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     mut source: Source,
+    mut commands: HeapCons<PlaybackCommand>,
     failed: Arc<AtomicBool>,
 ) -> Result<cpal::Stream> {
     let channels = config.channels as usize;
     Ok(device.build_output_stream(
         config,
         move |data: &mut [T], _| {
+            apply_commands(&mut source, &mut commands);
             // Bounded stack scratch, independent of backend callback size.
             let mut scratch = [[0.0; 2]; 256];
             for block in data.chunks_mut(channels * scratch.len()) {
@@ -137,6 +189,28 @@ fn build<T: cpal::SizedSample + cpal::FromSample<f32>>(
         },
         None,
     )?)
+}
+
+fn apply_commands(source: &mut Source, commands: &mut HeapCons<PlaybackCommand>) {
+    // Bound work even if the producer keeps adding commands during this callback.
+    for _ in 0..COMMAND_CAPACITY {
+        let Some(command) = commands.try_pop() else {
+            break;
+        };
+        if let Source::Pattern(renderer) = source {
+            match command {
+                PlaybackCommand::Play => renderer.play(),
+                PlaybackCommand::Pause => renderer.pause(),
+                PlaybackCommand::Stop => renderer.stop(),
+                PlaybackCommand::SeekStep(step) => {
+                    let _ = renderer.seek_step(step);
+                }
+                PlaybackCommand::SetBpm(bpm) => {
+                    let _ = renderer.set_bpm(bpm);
+                }
+            }
+        }
+    }
 }
 
 enum Source {
@@ -193,6 +267,46 @@ impl Renderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn queued_controls_are_fifo_and_overflow_preserves_existing_commands() {
+        let samples = std::array::from_fn(|_| AudioSample {
+            samples: vec![0.25; 64],
+            channels: 1,
+            sample_rate: 8,
+        });
+        let mut pattern = Pattern::default();
+        pattern.set(0, 4, 127).unwrap();
+        let renderer = PatternRenderer::new(samples, pattern, 8, 120.0, 1.0).unwrap();
+        let mut source = Source::Pattern(Box::new(renderer));
+        let (mut producer, mut consumer) = HeapRb::new(COMMAND_CAPACITY).split();
+        for command in [
+            PlaybackCommand::Stop,
+            PlaybackCommand::SetBpm(60.0),
+            PlaybackCommand::SeekStep(4),
+            PlaybackCommand::Play,
+        ] {
+            producer.try_push(command).unwrap();
+        }
+        apply_commands(&mut source, &mut consumer);
+        let mut output = [[0.0; 2]; 1];
+        source.render(&mut output);
+        assert_eq!(output[0], [0.25; 2]);
+        for _ in 0..COMMAND_CAPACITY {
+            producer.try_push(PlaybackCommand::Pause).unwrap();
+        }
+        assert_eq!(
+            producer.try_push(PlaybackCommand::Play),
+            Err(PlaybackCommand::Play)
+        );
+        apply_commands(&mut source, &mut consumer);
+        source.render(&mut output);
+        assert_eq!(output[0], [0.0; 2]);
+        producer.try_push(PlaybackCommand::Play).unwrap();
+        apply_commands(&mut source, &mut consumer);
+        source.render(&mut output);
+        assert_eq!(output[0], [0.25; 2]);
+    }
+
     #[test]
     fn resamples_mono_and_silences_after_end() {
         let mut renderer = Renderer {
