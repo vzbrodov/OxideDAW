@@ -155,6 +155,13 @@ impl Transport {
         Ok(())
     }
 
+    /// Continuous musical position, including completed loops.
+    pub fn position_steps(&self) -> f64 {
+        self.anchor_step
+            + (self.position as f64 - self.anchor_frame as f64) * self.bpm
+                / (self.sample_rate as f64 * 15.0)
+    }
+
     fn step_frame(&self, step: u64) -> u64 {
         (self.anchor_frame as f64
             + (step as f64 - self.anchor_step) * self.sample_rate as f64 * 15.0 / self.bpm)

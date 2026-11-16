@@ -4,7 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+gui = ["dep:oxide-ui"]
+
 [dependencies]
+oxide-ui = { path = "../oxide-ui", optional = true }
 oxide-core = { path = "../oxide-core" }
 oxide-audio = { path = "../oxide-audio" }
 oxide-dsp = { path = "../oxide-dsp" }

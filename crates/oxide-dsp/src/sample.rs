@@ -7,6 +7,7 @@ use symphonia::core::{
 
 pub type SampleResult<T> = Result<T, Box<dyn Error>>;
 
+#[derive(Clone)]
 pub struct AudioSample {
     pub samples: Vec<f32>,
     pub channels: usize,

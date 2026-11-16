@@ -1,0 +1,11 @@
+[package]
+name = "oxide-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
+oxide-core = { path = "../oxide-core" }
+oxide-audio = { path = "../oxide-audio" }
+oxide-dsp = { path = "../oxide-dsp" }

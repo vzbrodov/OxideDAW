@@ -8,6 +8,7 @@ members = [
     "crates/oxide-plugin-sdk",
     "crates/oxide-mcp",
     "crates/oxide-app",
+    "crates/oxide-ui",
 ]
 
 [workspace.package]

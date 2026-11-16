@@ -8,20 +8,25 @@ use ringbuf::{
     HeapCons, HeapProd, HeapRb,
 };
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU32, Ordering},
     Arc,
 };
 
 const COMMAND_CAPACITY: usize = 64;
 
 /// Small, allocation-free messages applied in FIFO order at audio callback boundaries.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PlaybackCommand {
     Play,
     Pause,
     Stop,
     SeekStep(usize),
     SetBpm(f64),
+    SetState {
+        pattern: Pattern,
+        bpm: f64,
+        volume: f32,
+    },
 }
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -39,6 +44,8 @@ pub struct Playback {
     commands: HeapProd<PlaybackCommand>,
     sample_rate: u32,
     pattern: bool,
+    position_steps: Arc<AtomicU32>,
+    peaks: Arc<[AtomicU32; TRACKS + 2]>,
 }
 
 impl Playback {
@@ -48,11 +55,17 @@ impl Playback {
         if !self.pattern {
             return Err("Transport commands require pattern playback".into());
         }
-        match command {
-            PlaybackCommand::SetBpm(bpm) => {
-                oxide_core::sequencer::Transport::new(self.sample_rate, bpm)?;
+        match &command {
+            PlaybackCommand::SetState { bpm, volume, .. } => {
+                oxide_core::sequencer::Transport::new(self.sample_rate, *bpm)?;
+                if !volume.is_finite() || !(0.0..=1.0).contains(volume) {
+                    return Err("Volume must be between 0 and 1".into());
+                }
             }
-            PlaybackCommand::SeekStep(step) if step >= oxide_core::sequencer::STEPS => {
+            PlaybackCommand::SetBpm(bpm) => {
+                oxide_core::sequencer::Transport::new(self.sample_rate, *bpm)?;
+            }
+            PlaybackCommand::SeekStep(step) if *step >= oxide_core::sequencer::STEPS => {
                 return Err("Step must be between 0 and 15".into());
             }
             _ => {}
@@ -60,6 +73,16 @@ impl Playback {
         self.commands
             .try_push(command)
             .map_err(|_| "Playback command queue is full; retry later".into())
+    }
+
+    /// Musical position reported by the audio callback, in continuous steps.
+    pub fn position_steps(&self) -> f32 {
+        f32::from_bits(self.position_steps.load(Ordering::Relaxed))
+    }
+
+    /// Highest per-channel and output peaks since the previous UI read.
+    pub fn take_peaks(&self) -> [f32; TRACKS + 2] {
+        std::array::from_fn(|i| f32::from_bits(self.peaks[i].swap(0, Ordering::Relaxed)))
     }
 
     pub fn start(sample: AudioSample, device_name: Option<&str>, volume: f32) -> Result<Self> {
@@ -126,16 +149,36 @@ impl Playback {
         let pattern = matches!(&source, Source::Pattern(_));
         let (commands, consumer) = HeapRb::new(COMMAND_CAPACITY).split();
         let failed = Arc::new(AtomicBool::new(false));
+        let position_steps = Arc::new(AtomicU32::new(0.0_f32.to_bits()));
+        let peaks = Arc::new(std::array::from_fn(|_| AtomicU32::new(0)));
         let stream = match supported.sample_format() {
-            cpal::SampleFormat::F32 => {
-                build::<f32>(&device, &config, source, consumer, failed.clone())?
-            }
-            cpal::SampleFormat::I16 => {
-                build::<i16>(&device, &config, source, consumer, failed.clone())?
-            }
-            cpal::SampleFormat::U16 => {
-                build::<u16>(&device, &config, source, consumer, failed.clone())?
-            }
+            cpal::SampleFormat::F32 => build::<f32>(
+                &device,
+                &config,
+                source,
+                consumer,
+                failed.clone(),
+                position_steps.clone(),
+                peaks.clone(),
+            )?,
+            cpal::SampleFormat::I16 => build::<i16>(
+                &device,
+                &config,
+                source,
+                consumer,
+                failed.clone(),
+                position_steps.clone(),
+                peaks.clone(),
+            )?,
+            cpal::SampleFormat::U16 => build::<u16>(
+                &device,
+                &config,
+                source,
+                consumer,
+                failed.clone(),
+                position_steps.clone(),
+                peaks.clone(),
+            )?,
             format => return Err(format!("Unsupported device sample format: {format}").into()),
         };
         stream.play()?;
@@ -145,6 +188,8 @@ impl Playback {
             commands,
             sample_rate: config.sample_rate.0,
             pattern,
+            position_steps,
+            peaks,
         })
     }
 }
@@ -155,6 +200,8 @@ fn build<T: cpal::SizedSample + cpal::FromSample<f32>>(
     mut source: Source,
     mut commands: HeapCons<PlaybackCommand>,
     failed: Arc<AtomicBool>,
+    position_steps: Arc<AtomicU32>,
+    peaks: Arc<[AtomicU32; TRACKS + 2]>,
 ) -> Result<cpal::Stream> {
     let channels = config.channels as usize;
     Ok(device.build_output_stream(
@@ -163,9 +210,11 @@ fn build<T: cpal::SizedSample + cpal::FromSample<f32>>(
             apply_commands(&mut source, &mut commands);
             // Bounded stack scratch, independent of backend callback size.
             let mut scratch = [[0.0; 2]; 256];
+            let mut callback_peaks = [0.0; TRACKS + 2];
             for block in data.chunks_mut(channels * scratch.len()) {
                 let frames = block.len() / channels;
                 source.render(&mut scratch[..frames]);
+                collect_peaks(&source, &scratch[..frames], &mut callback_peaks);
                 for (frame, &[left, right]) in
                     block.chunks_exact_mut(channels).zip(&scratch[..frames])
                 {
@@ -183,12 +232,37 @@ fn build<T: cpal::SizedSample + cpal::FromSample<f32>>(
                     }
                 }
             }
+            if let Source::Pattern(renderer) = &source {
+                position_steps.store(
+                    (renderer.position_steps() as f32).to_bits(),
+                    Ordering::Relaxed,
+                );
+            }
+            for (meter, value) in peaks.iter().zip(callback_peaks) {
+                meter.fetch_max(value.to_bits(), Ordering::Relaxed);
+            }
         },
         move |_| {
             failed.store(true, Ordering::Relaxed);
         },
         None,
     )?)
+}
+
+fn collect_peaks(source: &Source, frames: &[[f32; 2]], peaks: &mut [f32; TRACKS + 2]) {
+    match source {
+        Source::Pattern(renderer) => {
+            for (peak, value) in peaks.iter_mut().zip(renderer.peaks()) {
+                *peak = peak.max(value);
+            }
+        }
+        Source::Sample(_) => {
+            for frame in frames {
+                peaks[TRACKS] = peaks[TRACKS].max(frame[0].abs());
+                peaks[TRACKS + 1] = peaks[TRACKS + 1].max(frame[1].abs());
+            }
+        }
+    }
 }
 
 fn apply_commands(source: &mut Source, commands: &mut HeapCons<PlaybackCommand>) {
@@ -207,6 +281,13 @@ fn apply_commands(source: &mut Source, commands: &mut HeapCons<PlaybackCommand>)
                 }
                 PlaybackCommand::SetBpm(bpm) => {
                     let _ = renderer.set_bpm(bpm);
+                }
+                PlaybackCommand::SetState {
+                    pattern,
+                    bpm,
+                    volume,
+                } => {
+                    let _ = renderer.set_state(pattern, bpm, volume);
                 }
             }
         }
@@ -267,6 +348,42 @@ impl Renderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn callback_meters_keep_early_chunk_peaks_and_measure_audition_stereo() {
+        let samples = std::array::from_fn(|_| AudioSample {
+            samples: vec![0.5],
+            channels: 1,
+            sample_rate: 8,
+        });
+        let mut pattern = Pattern::default();
+        pattern.set(0, 0, 127).unwrap();
+        let mut renderer = PatternRenderer::new(samples, pattern, 8, 120.0, 0.5).unwrap();
+        renderer.set_looping(false);
+        renderer.play();
+        let mut source = Source::Pattern(Box::new(renderer));
+        let mut scratch = [[0.0; 2]; 256];
+        let mut peaks = [0.0; TRACKS + 2];
+        source.render(&mut scratch);
+        collect_peaks(&source, &scratch, &mut peaks);
+        source.render(&mut scratch);
+        collect_peaks(&source, &scratch, &mut peaks);
+        assert_eq!(peaks, [0.5, 0.0, 0.0, 0.0, 0.25, 0.25]);
+        let mut source = Source::Sample(Renderer {
+            sample: AudioSample {
+                samples: vec![0.5, -1.0],
+                channels: 2,
+                sample_rate: 8,
+            },
+            position: 0.0,
+            rate: 8,
+            volume: 0.5,
+        });
+        let mut peaks = [0.0; TRACKS + 2];
+        source.render(&mut scratch);
+        collect_peaks(&source, &scratch, &mut peaks);
+        assert_eq!(peaks, [0.0, 0.0, 0.0, 0.0, 0.25, 0.5]);
+    }
+
     #[test]
     fn queued_controls_are_fifo_and_overflow_preserves_existing_commands() {
         let samples = std::array::from_fn(|_| AudioSample {

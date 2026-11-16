@@ -35,6 +35,7 @@ pub struct PatternRenderer {
     sample_rate: u32,
     volume: f32,
     paused: bool,
+    peaks: [f32; TRACKS + 2],
 }
 
 impl PatternRenderer {
@@ -64,6 +65,7 @@ impl PatternRenderer {
             sample_rate,
             volume,
             paused: false,
+            peaks: [0.0; TRACKS + 2],
         })
     }
 
@@ -102,10 +104,35 @@ impl PatternRenderer {
         Ok(())
     }
 
+    pub fn peaks(&self) -> [f32; TRACKS + 2] {
+        self.peaks
+    }
+
+    pub fn position_steps(&self) -> f64 {
+        self.transport.position_steps()
+    }
+
+    /// A small validated snapshot swaps atomically between render blocks.
+    pub fn set_state(
+        &mut self,
+        pattern: Pattern,
+        bpm: f64,
+        volume: f32,
+    ) -> Result<(), &'static str> {
+        if !volume.is_finite() || !(0.0..=1.0).contains(&volume) {
+            return Err("Volume must be between 0 and 1");
+        }
+        self.transport.set_bpm(bpm)?;
+        self.pattern = pattern;
+        self.volume = volume;
+        Ok(())
+    }
+
     /// Render stereo frames, placing triggers at their exact offsets in this block.
     /// One-shot playback drains sample tails after the final step.
     pub fn render(&mut self, output: &mut [[f32; 2]]) {
         output.fill([0.0; 2]);
+        self.peaks.fill(0.0);
         let draining = !self.transport.is_playing() && self.transport.position() != 0;
         if !self.transport.is_playing() && !draining {
             return;
@@ -118,25 +145,41 @@ impl PatternRenderer {
         let tracks = &mut self.tracks;
         let rate = self.sample_rate;
         let volume = self.volume;
+        let peaks = &mut self.peaks;
         self.transport
             .process(output.len(), &self.pattern, |event| {
-                mix(tracks, rate, volume, &mut output[cursor..event.offset]);
+                mix(
+                    tracks,
+                    rate,
+                    volume,
+                    peaks,
+                    &mut output[cursor..event.offset],
+                );
                 cursor = event.offset;
                 tracks[event.track].trigger(event.velocity);
             });
-        mix(tracks, rate, volume, &mut output[cursor..]);
+        mix(tracks, rate, volume, peaks, &mut output[cursor..]);
     }
 }
 
-fn mix(tracks: &mut [Track; TRACKS], rate: u32, volume: f32, output: &mut [[f32; 2]]) {
+fn mix(
+    tracks: &mut [Track; TRACKS],
+    rate: u32,
+    volume: f32,
+    peaks: &mut [f32; TRACKS + 2],
+    output: &mut [[f32; 2]],
+) {
     for frame in output {
         let mut sum = [0.0; 2];
-        for track in tracks.iter_mut() {
+        for (index, track) in tracks.iter_mut().enumerate() {
             let value = track.mix(rate);
+            peaks[index] = peaks[index].max(value[0].abs()).max(value[1].abs());
             sum[0] += value[0];
             sum[1] += value[1];
         }
         *frame = sum.map(|value| (value * volume).clamp(-1.0, 1.0));
+        peaks[TRACKS] = peaks[TRACKS].max(frame[0].abs());
+        peaks[TRACKS + 1] = peaks[TRACKS + 1].max(frame[1].abs());
     }
 }
 
@@ -289,6 +332,43 @@ mod tests {
         let mut output = [[0.0; 2]; 4];
         renderer.render(&mut output);
         assert_eq!(output, [[0.25; 2], [0.25; 2], [0.5; 2], [0.5; 2]]);
+    }
+
+    #[test]
+    fn meters_measure_channel_peaks_and_stereo_output_and_clear_when_paused() {
+        let mut pattern = Pattern::default();
+        pattern.set(0, 0, 127).unwrap();
+        let mut renderer =
+            PatternRenderer::new(samples(&[0.25, -0.5], 2), pattern, 8, 120.0, 0.5).unwrap();
+        renderer.play();
+        renderer.render(&mut [[0.0; 2]; 1]);
+        assert_eq!(renderer.peaks(), [0.5, 0.0, 0.0, 0.0, 0.125, 0.25]);
+        renderer.pause();
+        renderer.render(&mut [[0.0; 2]; 1]);
+        assert_eq!(renderer.peaks(), [0.0; TRACKS + 2]);
+    }
+
+    #[test]
+    fn state_snapshot_validates_before_changing_pattern_tempo_or_gain() {
+        let mut original = Pattern::default();
+        original.set(0, 0, 127).unwrap();
+        let mut replacement = Pattern::default();
+        replacement.set(0, 1, 127).unwrap();
+        let mut renderer = renderer(&[0.25], original);
+        assert!(renderer
+            .set_state(replacement.clone(), 60.0, f32::NAN)
+            .is_err());
+        let mut output = [[0.0; 2]; 2];
+        renderer.render(&mut output);
+        assert_eq!(output, [[0.25; 2], [0.0; 2]]);
+        assert_eq!(renderer.position_steps(), 2.0);
+        renderer.stop();
+        renderer.set_state(replacement, 60.0, 0.5).unwrap();
+        renderer.play();
+        let mut output = [[0.0; 2]; 3];
+        renderer.render(&mut output);
+        assert_eq!(output, [[0.0; 2], [0.0; 2], [0.125; 2]]);
+        assert_eq!(renderer.position_steps(), 1.5);
     }
 
     #[test]

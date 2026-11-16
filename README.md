@@ -16,7 +16,10 @@ JSON project, inspect it and play it again after reopening.
 The line-oriented project editor supports validated command batches and undo/redo.
 The renderer supports pause, stop, step seeking, live tempo changes and one-shot tail playback.
 Pattern playback accepts transport commands; Enter quits.
-The workspace builds and 34 tests pass; real audio hardware playback remains
+A native studio workspace provides a four-bar pattern monitor, a sample browser,
+step and velocity editing, a sampler with rotary controls, stereo peak meters,
+transport, master fader, project storage and undo/redo.
+The workspace builds and 38 tests pass; real audio hardware playback remains
 unverified. The DAW features
 described below are planned, unless explicitly marked complete.
 
@@ -67,6 +70,22 @@ the CLI exits with code 1 if any command was rejected.
 
 Controls pass through a bounded FIFO of 64 messages and take effect at the next
 audio callback. A full queue rejects the new control with a retry message.
+
+### Desktop workspace
+
+```sh
+cargo run -p oxide-app --features gui -- gui
+cargo run -p oxide-app --features gui -- gui beat.oxide.json
+```
+
+Select a channel and choose a WAV, FLAC or MP3 from the browser, or drop a file
+onto the window. Click steps to build the beat; right-click a step to select it
+for velocity editing. Space plays/pauses, Ctrl+S saves, Ctrl+Z undoes and
+Ctrl+Shift+Z redoes. The native interface uses eframe/egui with OpenGL on Linux
+X11 or Wayland; CLI playback can still be built without the `gui` feature.
+See [workspace controls, design and runtime requirements](docs/interface.md).
+
+![OxideDAW pattern workspace](docs/images/workspace.png)
 
 ### Saving and reopening a beat
 
@@ -198,9 +217,9 @@ Implementation status and development roadmap (Russian): [DEVELOPMENT_PLAN.md](D
 - [x] Construct the 16-step grid sequencer state and playback dispatcher (CLI, four tracks).
 
 ### Phase 3: Graphical Interface MVP
-- [ ] Initialize GPU-rendered UI window using `wgpu` and a declarative UI framework.
-- [ ] Render interactive step sequencer grid with playback cursor.
-- [ ] Implement drag-and-drop sample loading into sampler tracks.
+- [x] Initialize a native GPU-rendered UI window using eframe/egui and OpenGL.
+- [x] Render an interactive step sequencer grid with an audio-driven playback cursor.
+- [x] Implement drag-and-drop sample loading into the selected sampler track.
 
 ### Phase 4: Piano Roll & MIDI Subsystem
 - [ ] Create MIDI event sequence model (note on, note off, pitch bend, velocity).

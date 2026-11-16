@@ -16,6 +16,7 @@ use std::{
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const HELP: &str = "Usage:
+  oxide-app gui [project.oxide.json]  (requires --features gui)
   oxide-app devices
   oxide-app play <file.wav> [volume: 0..1] [device name]
   oxide-app pattern <kick.wav> <snare.wav> <hat.wav> <perc.wav> [bpm] [volume: 0..1] [device name]
@@ -38,6 +39,10 @@ fn main() {
 fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
+        #[cfg(feature = "gui")]
+        Some("gui") if args.len() <= 2 => oxide_ui::run(args.get(1).map(Path::new))?,
+        #[cfg(not(feature = "gui"))]
+        Some("gui") => return Err("Build with --features gui to open the desktop interface".into()),
         Some("devices") if args.len() == 1 => {
             for name in output_devices()? {
                 println!("{name}");
