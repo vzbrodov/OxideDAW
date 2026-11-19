@@ -1,6 +1,8 @@
 //! Native pattern workspace. File I/O, decoding and edits stay on the UI thread.
 mod arranger;
+mod instrument;
 mod session;
+mod skin;
 mod theme;
 mod views;
 mod widgets;
@@ -34,7 +36,7 @@ pub fn run(path: Option<&Path>) -> ProjectResult<()> {
         options,
         Box::new(move |cc| {
             theme::apply(&cc.egui_ctx);
-            Ok(Box::new(Workspace::new(session)))
+            Ok(Box::new(Workspace::new(session, &cc.egui_ctx)?))
         }),
     )
     .map_err(|error| error.to_string().into())
@@ -48,6 +50,8 @@ enum FileAction {
 
 struct Workspace {
     session: Session,
+    skin: skin::Skin,
+    preview_volume: f32,
     samples: [Option<AudioSample>; TRACKS],
     loaded_paths: [Option<PathBuf>; TRACKS],
     media_errors: [Option<String>; TRACKS],
@@ -81,13 +85,15 @@ struct Workspace {
 }
 
 impl Workspace {
-    fn new(session: Session) -> Self {
+    fn new(session: Session, ctx: &egui::Context) -> Result<Self, image::ImageError> {
         let bpm = session.editor.project().bpm;
         let volume = session.editor.project().master_volume;
         let folder = session.media_base.display().to_string();
         let velocity = session.editor.project().pattern.get(0, 0).unwrap_or(0);
         let mut app = Self {
             session,
+            skin: skin::Skin::new(ctx)?,
+            preview_volume: 0.7,
             samples: std::array::from_fn(|_| None),
             loaded_paths: std::array::from_fn(|_| None),
             media_errors: std::array::from_fn(|_| None),
@@ -134,7 +140,7 @@ impl Workspace {
             .map(|p| p.display().to_string())
             .unwrap_or_default();
         app.refresh_browser();
-        app
+        Ok(app)
     }
 
     fn notice(&mut self, message: impl Into<String>, error: bool) {
@@ -429,8 +435,8 @@ impl Workspace {
                     if ui.button(title).clicked() {
                         let path = PathBuf::from(self.file_input.trim());
                         match action {
-                            FileAction::Open => match Session::open(Some(&path)) {
-                                Ok(session) => { *self = Self::new(session); }
+                            FileAction::Open => match Session::open(Some(&path)).and_then(|session| Self::new(session, ctx).map_err(Into::into)) {
+                                Ok(workspace) => { *self = workspace; }
                                 Err(error) => self.notice(format!("Cannot open project: {error}"), true),
                             },
                             FileAction::Save => match self.session.save(&path) {
@@ -519,12 +525,12 @@ impl eframe::App for Workspace {
         }
         self.master(ctx);
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(BACK).inner_margin(0))
+            .frame(egui::Frame::new().fill(BACK).inner_margin(14))
             .show(ctx, |ui| {
                 egui::ScrollArea::both()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        ui.set_min_width(720.0);
+                        ui.set_min_width(650.0);
                         self.sequence_view(ui);
                         self.rack(ui);
                         self.inspector(ui);

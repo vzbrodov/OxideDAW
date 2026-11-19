@@ -16,7 +16,7 @@ JSON project, inspect it and play it again after reopening.
 The line-oriented project editor supports validated command batches and undo/redo.
 The renderer supports pause, stop, step seeking, live tempo changes and one-shot tail playback.
 Pattern playback accepts transport commands; Enter quits.
-A native studio workspace provides a four-bar pattern monitor, a sample browser,
+A native studio workspace provides a four-channel rhythm panel, a sample browser,
 step and velocity editing, a sampler with rotary controls, stereo peak meters,
 transport, master fader, project storage and undo/redo.
 The workspace builds and 43 tests pass. Playback on real audio hardware remains

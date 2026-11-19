@@ -1,77 +1,81 @@
 # Pattern studio
 
-The native workspace combines a time-based pattern monitor, a four-channel step
+The native workspace combines a four-channel rhythm panel and step
 sequencer, a sample library, an instrument-style sampler panel and stereo output.
 
 ![OxideDAW pattern studio](images/workspace.png)
 
 ## Visual language
 
-The material treatment follows the studio controls in
-[GarageBand](https://support.apple.com/guide/garageband/welcome/mac): a metal
-transport panel, an inset musical-position display, shaded fader caps, illuminated
-step buttons and rotary controls with directional lighting. The sampler cabinet
-has narrow wooden side pieces and recessed waveform glass. These surfaces are
-painted as native geometry; the interface does not depend on image backgrounds.
+The workspace follows the material vocabulary of studio instruments: a dark
+anodised rhythm panel, an aluminium sampler faceplate, moulded silicone pads,
+turned metal rotary caps and recessed waveform glass. The original control
+renders share a fixed camera and area-light rig. Their reproducible Blender
+source is in `crates/oxide-ui/assets/hardware/`; labels, scales, state indicators
+and all interactions are native egui drawing rather than a screenshot overlay.
 
-The time ruler and aligned track headers take structural reference from
-[Ableton Live](https://www.ableton.com/en/manual/arrangement-view/).
-The grouped step rows follow the pattern workflow of
+The hardware construction takes reference from
+[GarageBand](https://support.apple.com/guide/garageband/welcome/mac) and
+[Reason Rack](https://www.reasonstudios.com/rack).
+The grouped step rows follow the workflow of
 [FL Studio's Channel Rack](https://www.image-line.com/fl-studio-learning-content/fl-studio-online-manual/html/channelrack.htm).
-Track color connects each waveform, its step row and the selected sampler.
+The operational hierarchy separates browser, pattern, instrument and output,
+as in [Ableton Live](https://www.ableton.com/en/manual/live-concepts/).
+No product artwork is bundled.
 
 | Role | Color |
 | --- | --- |
-| Workspace | `#27282A` |
-| Panels | `#353639` |
-| Control surface | `#4C4E52` |
+| Workspace | `#1B1D1F` |
+| Shell panels | `#2A2C2F` |
+| Rhythm faceplate | `#444849` → `#2D3133` |
+| Sampler aluminium | `#C9C8C0` → `#B6B5AC` |
+| Instrument ink | `#2B2D2C` |
 | Text | `#E2E3E4` |
 | Secondary text | `#A4A7AB` |
 | Brass accent | `#D8AB56` |
 
-Track colors are blue, mauve, green and amber. Green/yellow/red meter segments
-represent measured signal levels. Buttons have separate raised, pressed, selected,
-hover and keyboard-focus states. The bundled Liberation Sans and Liberation Mono
-fonts keep names and musical values compact; their font license is included in
+Track colors are blue, mauve, green and amber. Meter segments use green,
+yellow and red for measured signal levels. Typography uses Liberation Sans for
+control labels and Liberation Mono for musical position and technical values.
+Both are bundled under SIL OFL 1.1, with attribution in
 `crates/oxide-ui/assets/fonts/LICENSE`.
 
 ## Working areas
 
-**Transport.** Open/save, undo/redo, return to the first step, stop, play/pause,
-editable tempo, bar/beat/tick position and stereo output meters. File and Edit
-menus also provide project actions; Library toggles the browser.
+**Transport.** Open/save, undo/redo, rewind, stop, play/pause, tempo,
+bar/beat/tick position and stereo output meters. File and Edit menus provide
+project actions; Library toggles the browser.
 
-**Pattern timeline.** Four repetitions of the current one-bar pattern, with a
-bar/beat/subdivision ruler and sample envelopes at their trigger positions.
-Click a waveform region to select its channel and seek to a step. The cursor
-reads musical position from the audio callback. Arrangement editing remains
-future work.
+**Rhythm panel.** Four channels and sixteen steps, grouped into four beats.
+Click a pad to toggle velocity 0/100; right-click to select without changing it.
+In the Pattern tab, the ruler above the pads seeks within the current bar. Double-click a channel name to audition its sample.
 
-**Step sequencer.** Click a pad to toggle velocity 0/100; right-click to select
-it without changing it. The selected step's velocity is available through the
-slider and the sampler's rotary control. The small bar beneath each active pad
-shows its velocity. Clear channel applies all sixteen edits as one undo action.
-The triangle on a channel auditions its sample.
+**Velocity bank.** The sixteen bars show the selected channel's step velocities.
+Click or drag a bar to edit; arrow keys make fine changes when it has focus.
+The numeric slider also edits the selected step. Clear channel applies all
+sixteen edits as one undo action. A velocity drag commits once on release.
 
-**Sampler.** Real sample waveform, duration, channel count, sample rate, zoom,
-source path, load/unassign and audition controls. Drag either rotary control
-vertically to change step velocity or master output; arrow keys make fine changes.
-Audition stops pattern playback and plays the selected file once. Stop also
-ends audition playback.
+**Sampler.** The source display shows the actual envelope, duration, channel
+count, sample rate and a time scale. Waveform zoom changes the visible beginning
+of the source. Audition level changes the level used on the next preview;
+it is a session-only preview setting, multiplied by master output gain.
+Drag either knob vertically or use arrow keys when focused. Preview stops
+pattern playback; Stop ends preview too. Source path, Load, Unassign and
+Audition operate on the selected channel.
 
-**Master.** A logarithmic fader with a −60..0 dB scale and separate left/right
-output meters. Track meters show channel peaks before master gain. Peak values
-are measured in the audio callback and retained across callback chunks until the
-UI reads them; the display uses a short decay. The 0 dB button sets unity gain.
+**Master.** The sole project output control: a logarithmic fader with a
+−60..0 dB scale and separate left/right meters. Peak values come from the audio
+callback, accumulate across callback chunks and decay visually. The 0 dB
+button sets unity gain.
 
 ## Files and editing
 
 Select a channel, then click a WAV, FLAC or MP3 in the library to assign it.
 Dropping audio on the window assigns it to the selected channel. The library
-supports folder navigation, filtering and a project-media list.
+supports folder navigation, filtering and the selected channel assignment.
 
 Pattern, tempo and gain edits reach playback through a single validated,
-bounded state message. Slider and rotary drags commit on release, preserving
+bounded state message. Project slider drags commit on release, preserving
 one undo action per gesture. Tempo text commits on Enter or loss of focus.
 Assigning a new sample stops pattern playback while the file is decoded.
 Unassigned channels are silent; unavailable assigned samples can be replaced
@@ -116,5 +120,5 @@ requires ALSA development files. A minimal Debian/Ubuntu X11 environment needs
 
 Native rendering and input are checked under Xvfb with software OpenGL; playback
 and meters are checked through ALSA null. Playback on real audio hardware remains
-unverified. Arrangement, piano roll, per-channel mixing, effects and native OS
+unverified. Piano roll, per-channel mixing, effects and native OS
 file-picker dialogs remain future work.
