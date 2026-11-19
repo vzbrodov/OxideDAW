@@ -155,8 +155,17 @@ impl Transport {
     /// Jump to a zero-indexed step in the current pattern, preserving play/pause.
     /// The destination triggers on the next nonempty block after playback resumes.
     pub fn seek_step(&mut self, step: usize) -> Result<(), &'static str> {
-        if step >= STEPS {
-            return Err("Step must be between 0 and 15");
+        self.seek_sequence_step(step, &[])
+    }
+
+    /// Jump to an absolute step within the sequence, preserving play/pause.
+    pub fn seek_sequence_step(
+        &mut self,
+        step: usize,
+        bars: &[ArrangementBar],
+    ) -> Result<(), &'static str> {
+        if step >= sequence_step_count(bars) {
+            return Err("Step is outside the sequence");
         }
         self.position = (step as f64 * self.sample_rate as f64 * 15.0 / self.bpm).round() as u64;
         self.anchor_frame = self.position;
@@ -185,7 +194,7 @@ impl Transport {
 
     /// Scheduled end of a sequence. An empty arrangement plays one bar.
     pub fn sequence_end_frame(&self, bars: &[ArrangementBar]) -> u64 {
-        self.step_frame(sequence_steps(bars))
+        self.step_frame(sequence_step_count(bars) as u64)
     }
 
     /// Emit events for [position, position + frames). Caller supplies the sink;
@@ -206,7 +215,7 @@ impl Transport {
         if !self.playing || frames == 0 {
             return;
         }
-        let total_steps = sequence_steps(bars);
+        let total_steps = sequence_step_count(bars) as u64;
         let end = self.position.saturating_add(frames as u64);
         while self.looping || self.next_step < total_steps {
             let frame = self.step_frame(self.next_step);
@@ -244,8 +253,9 @@ impl Transport {
     }
 }
 
-fn sequence_steps(bars: &[ArrangementBar]) -> u64 {
-    bars.len().max(1) as u64 * STEPS as u64
+/// An empty arrangement uses the main pattern for one bar.
+pub fn sequence_step_count(bars: &[ArrangementBar]) -> usize {
+    bars.len().max(1) * STEPS
 }
 
 #[cfg(test)]

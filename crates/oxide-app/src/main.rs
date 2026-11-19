@@ -4,7 +4,7 @@ mod editor;
 use oxide_audio::export::export_project;
 use oxide_audio::playback::{output_devices, Playback};
 use oxide_core::{
-    sequencer::{Pattern, TRACKS},
+    sequencer::{sequence_step_count, Pattern, TRACKS},
     Project,
 };
 use oxide_dsp::sample::AudioSample;
@@ -23,12 +23,12 @@ const HELP: &str = "Usage:
   oxide-app pattern <kick.wav> <snare.wav> <hat.wav> <perc.wav> [bpm] [volume: 0..1] [device name]
   oxide-app project-new <project.oxide.json> <kick.wav> <snare.wav> <hat.wav> <perc.wav> [bpm] [volume: 0..1]
   oxide-app project-info <project.oxide.json>
-  oxide-app project-play <project.oxide.json> [device name]
+  oxide-app project-play <project.oxide.json> [--arrangement] [device name]
   oxide-app project-export <project.oxide.json> <output.wav>
   oxide-app project-edit <project.oxide.json>
 pattern and project-new use a preset 16-step beat. Default BPM: 120, volume: 0.5.
 play runs once, then outputs silence; patterns loop. Enter stops playback.
-Pattern controls: play, pause, stop, bpm <1..999>, seek <0..15>, quit.
+Pattern controls: play, pause, stop, bpm <1..999>, seek <zero-based step>, quit.
 project-new refuses to overwrite an existing file. Media is referenced, not copied.";
 
 fn main() {
@@ -147,19 +147,37 @@ fn run() -> Result<()> {
                 println!("Arrangement: {} bars", project.arrangement.len());
             }
         }
-        Some("project-play") if (2..=3).contains(&args.len()) => {
+        Some("project-play") if (2..=4).contains(&args.len()) => {
             let path = Path::new(&args[1]);
+            let options = &args[2..];
+            let arrangement_mode = options.first().is_some_and(|arg| arg == "--arrangement");
+            let device_args = if arrangement_mode {
+                &options[1..]
+            } else {
+                options
+            };
+            if device_args.len() > 1 {
+                return Err("Expected at most one output device name".into());
+            }
+            let device = device_args.first().map(String::as_str);
             let project = Project::load(path)?;
-            let samples = load_project_samples(&project, path, false)?;
-            let playback = Playback::start_pattern(
+            let samples = load_project_samples(&project, path, arrangement_mode)?;
+            let arrangement = if arrangement_mode {
+                project.arrangement
+            } else {
+                Vec::new()
+            };
+            let last_step = sequence_step_count(&arrangement) - 1;
+            let playback = Playback::start_arrangement(
                 samples,
                 project.pattern,
+                arrangement,
                 project.bpm,
-                args.get(2).map(String::as_str),
+                device,
                 project.master_volume,
             )?;
             println!(
-                "Playing {} at {} BPM. Controls: play, pause, stop, bpm N, seek N; Enter quits.",
+                "Playing {} at {} BPM. Controls: play, pause, stop, bpm N, seek 0..{last_step}; Enter quits.",
                 project.name, project.bpm
             );
             wait_for_stop(playback, true)?;

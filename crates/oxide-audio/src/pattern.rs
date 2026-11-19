@@ -99,7 +99,15 @@ impl PatternRenderer {
 
     /// Seeking cuts existing tails; it never starts a paused/stopped transport.
     pub fn seek_step(&mut self, step: usize) -> Result<(), &'static str> {
-        self.transport.seek_step(step)?;
+        self.seek_sequence_step(step, &[])
+    }
+
+    pub(crate) fn seek_sequence_step(
+        &mut self,
+        step: usize,
+        arrangement: &[ArrangementBar],
+    ) -> Result<(), &'static str> {
+        self.transport.seek_sequence_step(step, arrangement)?;
         self.clear_voices();
         Ok(())
     }
