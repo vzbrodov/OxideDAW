@@ -25,8 +25,6 @@ impl Workspace {
         }
         if self.arrangement_mode {
             self.arranger(ui);
-        } else {
-            self.timeline(ui);
         }
     }
 
@@ -238,7 +236,8 @@ mod tests {
 
     #[test]
     fn arrangement_edits_share_project_history_and_variations_are_snapshots() {
-        let mut app = Workspace::new(Session::open(None).unwrap());
+        let mut app =
+            Workspace::new(Session::open(None).unwrap(), &egui::Context::default()).unwrap();
         let original_pattern = app.session.editor.project().pattern.clone();
         app.edit_bar(BarEdit::Add(ArrangementBar::Main {}));
         app.edit_bar(BarEdit::Add(ArrangementBar::Rest {}));

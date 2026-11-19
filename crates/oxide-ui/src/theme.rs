@@ -1,7 +1,7 @@
 use eframe::egui::{self, Color32, FontFamily, FontId, Stroke, TextStyle};
-pub const BACK: Color32 = Color32::from_rgb(39, 40, 42);
-pub const PANEL: Color32 = Color32::from_rgb(53, 54, 57);
-pub const RAISED: Color32 = Color32::from_rgb(66, 68, 71);
+pub const BACK: Color32 = Color32::from_rgb(27, 29, 31);
+pub const PANEL: Color32 = Color32::from_rgb(42, 44, 47);
+pub const RAISED: Color32 = Color32::from_rgb(55, 58, 61);
 pub const TEXT: Color32 = Color32::from_rgb(226, 227, 228);
 pub const MUTED: Color32 = Color32::from_rgb(164, 167, 171);
 pub const EDGE: Color32 = Color32::from_rgb(85, 87, 91);
@@ -67,13 +67,13 @@ pub fn apply(ctx: &egui::Context) {
     style.spacing.interact_size.y = 23.0;
     style
         .text_styles
-        .insert(TextStyle::Body, FontId::proportional(12.0));
+        .insert(TextStyle::Body, FontId::proportional(13.0));
     style
         .text_styles
-        .insert(TextStyle::Button, FontId::proportional(12.0));
+        .insert(TextStyle::Button, FontId::proportional(13.0));
     style
         .text_styles
-        .insert(TextStyle::Small, FontId::proportional(10.0));
+        .insert(TextStyle::Small, FontId::proportional(11.0));
     style
         .text_styles
         .insert(TextStyle::Monospace, FontId::monospace(11.0));
