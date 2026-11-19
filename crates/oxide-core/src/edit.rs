@@ -1,5 +1,5 @@
 //! Shared control-thread editing API. One successful batch is one undo action.
-use crate::{project::ProjectResult, Project};
+use crate::{project::ProjectResult, sequencer::ArrangementBar, Project};
 use serde::{Deserialize, Serialize};
 use std::{collections::VecDeque, path::PathBuf};
 
@@ -23,10 +23,13 @@ pub enum EditCommand {
         track_id: u64,
         sample: Option<PathBuf>,
     },
+    SetArrangement {
+        bars: Vec<ArrangementBar>,
+    },
 }
 
 /// Owns the editable document so callers cannot bypass validation or history.
-/// Snapshots are small (four tracks); history retains at most 128 undo actions.
+/// History retains snapshots for at most 128 undo actions.
 /// History is session-local and is never serialized into project documents.
 pub struct ProjectEditor {
     project: Project,
@@ -70,6 +73,7 @@ impl ProjectEditor {
                     let track = track_index(&candidate, *track_id)?;
                     candidate.tracks[track].sample = sample.clone();
                 }
+                EditCommand::SetArrangement { bars } => candidate.arrangement.clone_from(bars),
             }
             candidate.validate()?;
         }
@@ -235,6 +239,7 @@ mod tests {
             r#"{"command":"set_bpm","bpm":120,"typo":true}"#,
             r#"{"command":"unknown"}"#,
             r#"{"command":"set_step","track_id":1,"step":0,"velocity":256}"#,
+            r#"{"command":"set_arrangement","bars":[{"type":"main","typo":true}]}"#,
         ] {
             assert!(serde_json::from_str::<EditCommand>(json).is_err());
         }

@@ -1,7 +1,7 @@
 //! CLI audio prototype. All project I/O and decoding precede audio playback.
 mod controls;
 mod editor;
-use oxide_audio::export::export_pattern;
+use oxide_audio::export::export_project;
 use oxide_audio::playback::{output_devices, Playback};
 use oxide_core::{
     sequencer::{Pattern, TRACKS},
@@ -143,6 +143,9 @@ fn run() -> Result<()> {
                 };
                 println!("Track {}: {} — {media}", track.id, track.name);
             }
+            if !project.arrangement.is_empty() {
+                println!("Arrangement: {} bars", project.arrangement.len());
+            }
         }
         Some("project-play") if (2..=3).contains(&args.len()) => {
             let path = Path::new(&args[1]);
@@ -166,7 +169,7 @@ fn run() -> Result<()> {
             let destination = Path::new(&args[2]);
             let project = Project::load(path)?;
             let samples = load_project_samples(&project, path, true)?;
-            export_pattern(&project, samples, destination)
+            export_project(&project, samples, destination)
                 .map_err(|error| format!("Cannot export {}: {error}", destination.display()))?;
             println!("Exported {}", destination.display());
         }

@@ -1,11 +1,11 @@
-# Project format v1
+# Project format v2
 
-OxideDAW stores a four-track, 16-step session as UTF-8 JSON. The suggested
+OxideDAW stores a four-track session as UTF-8 JSON. The suggested
 extension is `.oxide.json`. Media is referenced separately and never embedded.
 
 | Field | Meaning |
 | --- | --- |
-| `format_version` | Required integer `1`. Unsupported versions are rejected. |
+| `format_version` | Required integer `2`. Loading v1 upgrades the project in memory. An explicit save writes v2. |
 | `name` | Nonempty project name. |
 | `bpm` | Finite tempo between 1 and 999. |
 | `sample_rate` | Positive target offline sample rate; must allow at least one frame per step. Live output follows the device's sample rate. |
@@ -15,6 +15,7 @@ extension is `.oxide.json`. Media is referenced separately and never embedded.
 | `tracks[].name` | Nonempty display name. |
 | `tracks[].sample` | UTF-8 path, or `null` when unassigned. |
 | `pattern.steps` | Exactly four arrays of sixteen integer velocities. `0` disables the step; `1..127` triggers a sample. |
+| `arrangement` | Optional list of bars, in playback order. An omitted or empty list exports the main pattern once. |
 
 Unknown fields, invalid array sizes, malformed JSON and out-of-range values are
 rejected. The earlier three-field `Project` Rust scaffold did not define an
@@ -31,13 +32,27 @@ A missing or unassigned sample does not stop `Project::load` or `project-info`.
 `project-play` requires all four samples and reports a track ID, name and file
 path when decoding fails. All decoding happens before starting audio playback.
 
+## Arrangement and export
+
+Every bar covers 16 steps and uses the project BPM, tracks and master volume.
+Each entry has one of these shapes.
+
+| Entry | Meaning |
+| --- | --- |
+| `{"type":"main"}` | Use the main pattern stored in the project. Edits to the main pattern apply to every such bar. |
+| `{"type":"variation","pattern":{...}}` | Use an independent pattern with the same `steps` shape and velocity range as the main pattern. |
+| `{"type":"rest"}` | Advance one bar without starting new hits. Already sounding samples can ring through it. |
+
+`project-export` renders all bars in order and drains any remaining sample
+tails at the end. `project-play` loops the main pattern.
+
 ## Editing
 
 Close playback, edit with `project-edit`, save, and reopen with `project-play`.
 The editor accepts a JSON command or array per line; arrays are atomic batches.
 `undo`/`redo` restore a whole batch; `show` prints the current document, `save`
 atomically saves it, and `quit` or EOF discards unsaved changes. History is
-session-local, capped at 128 actions, and is not stored in the v1 format.
+session-local and capped at 128 actions.
 
 | Command | Fields |
 | --- | --- |
@@ -45,6 +60,7 @@ session-local, capped at 128 actions, and is not stored in the v1 format.
 | `set_bpm` | `bpm` (1..999) |
 | `set_master_volume` | `volume` (0..1) |
 | `set_sample` | `track_id`, `sample` (stored path or `null` to unassign) |
+| `set_arrangement` | `bars` (the complete ordered list, or `[]` for single-pattern export) |
 
 For example: `{"command":"set_step","track_id":1,"step":0,"velocity":100}`.
 Sample references use the same rules as the document; editing does not copy,
@@ -59,8 +75,7 @@ Direct JSON editing is also supported: change `pattern.steps[track][step]` to se
 a velocity; rows and steps are zero-indexed.
 Track IDs identify the existing slots and should remain stable when renaming.
 A pattern row belongs to its track slot, so moving a track requires moving its
-row as well. There is one looping pattern; clips, arrangement and automation
-remain planned.
+row as well. The main pattern and arrangement variations share those slots.
 
 ## Storage guarantees
 

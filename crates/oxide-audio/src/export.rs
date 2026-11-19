@@ -1,6 +1,10 @@
 //! Offline export through the same sequencer and mixer as live playback.
 use crate::pattern::PatternRenderer;
-use oxide_core::{sequencer::TRACKS, storage::write_file, Project};
+use oxide_core::{
+    sequencer::{ArrangementBar, TRACKS},
+    storage::write_file,
+    Project,
+};
 use oxide_dsp::sample::AudioSample;
 use std::{
     io::{self, BufWriter, Seek, Write},
@@ -20,6 +24,24 @@ pub fn export_pattern(
     samples: [AudioSample; TRACKS],
     destination: &Path,
 ) -> io::Result<()> {
+    export(project, samples, &[], destination)
+}
+
+/// Export the saved arrangement, or one main pattern when the arrangement is empty.
+pub fn export_project(
+    project: &Project,
+    samples: [AudioSample; TRACKS],
+    destination: &Path,
+) -> io::Result<()> {
+    export(project, samples, &project.arrangement, destination)
+}
+
+fn export(
+    project: &Project,
+    samples: [AudioSample; TRACKS],
+    arrangement: &[ArrangementBar],
+    destination: &Path,
+) -> io::Result<()> {
     let rate = project.sample_rate;
     let byte_rate = rate
         .checked_mul(BYTES_PER_FRAME)
@@ -33,8 +55,8 @@ pub fn export_pattern(
     )
     .map_err(io::Error::other)?;
     renderer.set_looping(false);
-    let pattern_frames = renderer.one_shot_end_frame();
-    if pattern_frames > MAX_FRAMES {
+    let sequence_frames = renderer.sequence_end_frame(arrangement);
+    if sequence_frames > MAX_FRAMES {
         return Err(io::Error::other(TOO_LONG));
     }
     renderer.play();
@@ -43,10 +65,10 @@ pub fn export_pattern(
         write_header(&mut wav, rate, byte_rate, 0)?;
         let mut block = [[0.0; 2]; BLOCK_FRAMES];
         let mut written = 0;
-        while written < pattern_frames {
-            let count = (pattern_frames - written).min(BLOCK_FRAMES as u64) as usize;
+        while written < sequence_frames {
+            let count = (sequence_frames - written).min(BLOCK_FRAMES as u64) as usize;
             let frames = &mut block[..count];
-            renderer.render(frames);
+            renderer.render_sequence(frames, arrangement);
             write_frames(&mut wav, frames)?;
             written += count as u64;
         }

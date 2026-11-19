@@ -1,5 +1,5 @@
 //! Versioned project documents. File I/O and validation belong on the control thread.
-use crate::sequencer::{Pattern, Transport, TRACKS};
+use crate::sequencer::{ArrangementBar, Pattern, Transport, TRACKS};
 use crate::storage::{parent_directory, write_file};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 pub type ProjectResult<T> = Result<T, Box<dyn Error>>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +35,9 @@ pub struct Project {
     /// Track slots correspond to rows in the pattern grid.
     pub tracks: [Track; TRACKS],
     pub pattern: Pattern,
+    /// Empty uses the main pattern by itself.
+    #[serde(default)]
+    pub arrangement: Vec<ArrangementBar>,
 }
 
 impl Default for Project {
@@ -51,6 +54,7 @@ impl Default for Project {
                 sample: None,
             }),
             pattern: Pattern::default(),
+            arrangement: Vec::new(),
         }
     }
 }
@@ -88,7 +92,10 @@ impl Project {
     }
 
     pub fn from_json(json: &str) -> ProjectResult<Self> {
-        let project: Self = serde_json::from_str(json)?;
+        let mut project: Self = serde_json::from_str(json)?;
+        if project.format_version == 1 && project.arrangement.is_empty() {
+            project.format_version = FORMAT_VERSION;
+        }
         project.validate()?;
         Ok(project)
     }
@@ -221,7 +228,7 @@ mod tests {
     fn rejects_bad_version_tempo_ids_velocity_grid_and_unknown_fields() {
         let base = serde_json::to_value(Project::default()).unwrap();
         for (key, value) in [
-            ("format_version", serde_json::json!(2)),
+            ("format_version", serde_json::json!(3)),
             ("bpm", serde_json::json!(0)),
             ("master_volume", serde_json::json!(1.1)),
             ("sample_rate", serde_json::json!(0)),

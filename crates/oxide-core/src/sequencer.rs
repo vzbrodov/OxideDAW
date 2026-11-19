@@ -11,6 +11,16 @@ pub struct Pattern {
     steps: [[u8; STEPS]; TRACKS],
 }
 
+/// Each arrangement entry occupies one full 16-step bar.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ArrangementBar {
+    // Empty struct variants let Serde reject extra fields.
+    Main {},
+    Variation { pattern: Pattern },
+    Rest {},
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PatternData {
@@ -170,22 +180,47 @@ impl Transport {
 
     /// Scheduled end of the first pattern, using the current tempo anchor.
     pub fn one_shot_end_frame(&self) -> u64 {
-        self.step_frame(STEPS as u64)
+        self.sequence_end_frame(&[])
+    }
+
+    /// Scheduled end of a sequence. An empty arrangement plays one bar.
+    pub fn sequence_end_frame(&self, bars: &[ArrangementBar]) -> u64 {
+        self.step_frame(sequence_steps(bars))
     }
 
     /// Emit events for [position, position + frames). Caller supplies the sink;
     /// scheduling itself neither allocates nor locks. Stop resets; pause resumes.
-    pub fn process(&mut self, frames: usize, pattern: &Pattern, mut emit: impl FnMut(Trigger)) {
+    pub fn process(&mut self, frames: usize, pattern: &Pattern, emit: impl FnMut(Trigger)) {
+        self.process_arrangement(frames, pattern, &[], emit);
+    }
+
+    /// Schedule a sequence of bars using the same absolute clock as a single pattern.
+    /// The arrangement must stay fixed while the sequence is playing.
+    pub fn process_arrangement(
+        &mut self,
+        frames: usize,
+        main: &Pattern,
+        bars: &[ArrangementBar],
+        mut emit: impl FnMut(Trigger),
+    ) {
         if !self.playing || frames == 0 {
             return;
         }
+        let total_steps = sequence_steps(bars);
         let end = self.position.saturating_add(frames as u64);
-        while self.looping || self.next_step < STEPS as u64 {
+        while self.looping || self.next_step < total_steps {
             let frame = self.step_frame(self.next_step);
             if frame >= end {
                 break;
             }
-            let step = self.next_step as usize % STEPS;
+            let sequence_step = self.next_step % total_steps;
+            self.next_step += 1;
+            let pattern = match bars.get((sequence_step / STEPS as u64) as usize) {
+                Some(ArrangementBar::Rest {}) => continue,
+                Some(ArrangementBar::Variation { pattern }) => pattern,
+                Some(ArrangementBar::Main {}) | None => main,
+            };
+            let step = (sequence_step % STEPS as u64) as usize;
             for (track, steps) in pattern.steps.iter().enumerate() {
                 let velocity = steps[step];
                 if velocity != 0 {
@@ -197,14 +232,20 @@ impl Transport {
                     });
                 }
             }
-            self.next_step += 1;
         }
         self.position = end;
-        if !self.looping && end >= self.one_shot_end_frame() {
-            self.position = self.one_shot_end_frame();
-            self.playing = false;
+        if !self.looping {
+            let end_frame = self.step_frame(total_steps);
+            if end >= end_frame {
+                self.position = end_frame;
+                self.playing = false;
+            }
         }
     }
+}
+
+fn sequence_steps(bars: &[ArrangementBar]) -> u64 {
+    bars.len().max(1) as u64 * STEPS as u64
 }
 
 #[cfg(test)]

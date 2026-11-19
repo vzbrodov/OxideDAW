@@ -1,5 +1,9 @@
 //! End-to-end document workflow; no audio device is needed.
-use oxide_core::{sequencer::Pattern, Project};
+use oxide_core::{
+    project::FORMAT_VERSION,
+    sequencer::{ArrangementBar, Pattern},
+    Project,
+};
 use std::{
     fs,
     io::Write,
@@ -136,6 +140,80 @@ fn export_keeps_a_full_silent_bar_and_reports_missing_assigned_media() {
         "{message}"
     );
     assert!(!fixture.0.join("missing.wav").exists());
+}
+
+#[test]
+fn legacy_project_can_save_undo_and_export_an_arrangement() {
+    let fixture = Fixture::new();
+    fixture.wave_samples(1, &[8192; 1024]);
+    let path = fixture.0.join("beat.oxide.json");
+    let mut original = Project {
+        bpm: 137.0,
+        sample_rate: 8000,
+        master_volume: 1.0,
+        ..Project::default()
+    };
+    original.tracks[0].sample = Some("sample.wav".into());
+    original.pattern.set(0, 0, 127).unwrap();
+    original.pattern.set(0, 15, 127).unwrap();
+    let mut legacy = serde_json::to_value(&original).unwrap();
+    legacy["format_version"] = 1.into();
+    legacy.as_object_mut().unwrap().remove("arrangement");
+    fs::write(&path, legacy.to_string()).unwrap();
+    assert_eq!(Project::load(&path).unwrap(), original);
+
+    let mut variation = Pattern::default();
+    variation.set(0, 0, 64).unwrap();
+    let arrangement = vec![
+        ArrangementBar::Main {},
+        ArrangementBar::Rest {},
+        ArrangementBar::Variation { pattern: variation },
+        ArrangementBar::Main {},
+    ];
+    let command = serde_json::json!({"command": "set_arrangement", "bars": arrangement});
+    let result = fixture.edit(&format!("{command}\nundo\nsave\nquit\n"));
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(Project::load(&path).unwrap(), original);
+    let result = fixture.edit(&format!("{command}\nundo\nredo\nsave\nquit\n"));
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let saved = Project::load(&path).unwrap();
+    assert_eq!(saved.arrangement, arrangement);
+    let stored: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(stored["format_version"], FORMAT_VERSION);
+
+    let result = fixture.run(&["project-export", "beat.oxide.json", "song.wav"]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let audio = oxide_dsp::sample::AudioSample::load(&fixture.0.join("song.wav")).unwrap();
+    let (frames, remainder) = audio.samples.as_chunks::<2>();
+    assert!(remainder.is_empty());
+    // The last hit rings past frame 56058, the rounded end of bar four.
+    assert_eq!(frames.len(), 55182 + 1024);
+    let hits = [
+        (0, 8192),
+        (13139, 8192),
+        (28029, 4128),
+        (42044, 8192),
+        (55182, 8192),
+    ];
+    for (index, frame) in frames.iter().enumerate() {
+        let expected = hits
+            .iter()
+            .find(|&&(start, _)| (start..start + 1024).contains(&index))
+            .map_or(0.0, |&(_, pcm)| pcm as f32 / 32768.0);
+        assert_eq!(*frame, [expected; 2], "at frame {index}");
+    }
 }
 impl Drop for Fixture {
     fn drop(&mut self) {

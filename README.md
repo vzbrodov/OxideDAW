@@ -19,7 +19,7 @@ Pattern playback accepts transport commands; Enter quits.
 A native studio workspace provides a four-bar pattern monitor, a sample browser,
 step and velocity editing, a sampler with rotary controls, stereo peak meters,
 transport, master fader, project storage and undo/redo.
-The workspace builds and 40 tests pass. Playback on real audio hardware remains
+The workspace builds and 41 tests pass. Playback on real audio hardware remains
 unverified. The DAW features
 described below are planned, unless explicitly marked complete.
 
@@ -113,10 +113,11 @@ See [the project format](docs/project-format.md) for editing and storage details
 cargo run -p oxide-app -- project-export beat.oxide.json beat.wav
 ```
 
-Export renders one 16-step pattern plus any ringing sample tails to stereo
-16-bit PCM at the project's sample rate. It uses the saved BPM, step velocities
-and master volume and runs without an audio device. Unassigned tracks are
-silent. Missing assigned media causes an error. The destination must be new.
+Export renders the saved arrangement, or one 16-step pattern when the
+arrangement is empty. The new file contains stereo 16-bit PCM at the project's
+sample rate, including any ringing sample tails. Export uses the saved BPM,
+step velocities and master volume without opening an audio device. Unassigned
+tracks are silent. Missing assigned media causes an error.
 
 ### Editing a beat
 
@@ -127,6 +128,7 @@ command or JSON array per line. An array applies atomically and undoes as one ac
 {"command":"set_step","track_id":1,"step":0,"velocity":100}
 [{"command":"set_bpm","bpm":128},{"command":"set_master_volume","volume":0.4}]
 {"command":"set_sample","track_id":2,"sample":"samples/snare.wav"}
+{"command":"set_arrangement","bars":[{"type":"main"},{"type":"rest"},{"type":"main"}]}
 undo
 redo
 show
@@ -142,6 +144,10 @@ History holds up to 128 actions in memory and is cleared when the editor closes.
 Input may be piped from a script. Rejected lines report errors and leave state
 and history unchanged; later lines still run, and the process exits with code 1
 if any action failed, even if a subsequent `save` succeeded.
+
+`set_arrangement` sets the bar order for WAV export. Bars can use the main pattern,
+an independent variation or a rest. See [the project format](docs/project-format.md)
+for bar definitions and v1 compatibility.
 
 **OxideDAW** is an independent, general-purpose, cross-platform Digital Audio Workstation built for musicians, producers, sound designers, and composers on Windows and Linux. 
 
