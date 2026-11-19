@@ -1,4 +1,5 @@
 //! Native pattern workspace. File I/O, decoding and edits stay on the UI thread.
+mod arranger;
 mod session;
 mod theme;
 mod views;
@@ -9,7 +10,7 @@ use oxide_audio::playback::{Playback, PlaybackCommand};
 use oxide_core::{
     edit::EditCommand,
     project::ProjectResult,
-    sequencer::{STEPS, TRACKS},
+    sequencer::{ArrangementBar, STEPS, TRACKS},
 };
 use oxide_dsp::sample::AudioSample;
 use session::Session;
@@ -53,6 +54,9 @@ struct Workspace {
     peaks: [Vec<f32>; TRACKS],
     playback: Option<Playback>,
     playing: bool,
+    arrangement_mode: bool,
+    selected_bar: usize,
+    playback_bars: Vec<ArrangementBar>,
     selected: usize,
     selected_step: usize,
     bpm: f64,
@@ -90,6 +94,9 @@ impl Workspace {
             peaks: std::array::from_fn(|_| Vec::new()),
             playback: None,
             playing: false,
+            arrangement_mode: false,
+            selected_bar: 0,
+            playback_bars: Vec::new(),
             selected: 0,
             selected_step: 0,
             bpm,
@@ -202,6 +209,18 @@ impl Workspace {
             .map(|p| p.display().to_string())
             .unwrap_or_default();
         let project = self.session.editor.project();
+        if self.arrangement_mode
+            && self.playback.is_some()
+            && self.playback_bars != project.arrangement
+        {
+            self.playback = None;
+            self.playing = false;
+            self.notice(
+                "Arrangement changed. Press Play to hear the new order.",
+                false,
+            );
+            return;
+        }
         self.send(PlaybackCommand::SetState {
             pattern: project.pattern.clone(),
             bpm: project.bpm,
@@ -235,6 +254,11 @@ impl Workspace {
     fn toggle_play(&mut self) {
         self.preview = None;
         self.preview_until = None;
+        let playing_notice = if self.arrangement_mode {
+            "Playing arrangement. Space pauses; stop returns to the first bar."
+        } else {
+            "Playing Pattern 01. Space pauses; stop returns to the first step."
+        };
         if self.playing {
             self.send(PlaybackCommand::Pause);
             self.playing = false;
@@ -247,10 +271,7 @@ impl Workspace {
             self.send(PlaybackCommand::Play);
             self.playing = self.playback.is_some();
             if self.playing {
-                self.notice(
-                    "Playing Pattern 01. Space pauses; stop returns to the first step.",
-                    false,
-                );
+                self.notice(playing_notice, false);
             }
             return;
         }
@@ -276,20 +297,24 @@ impl Workspace {
                 sample_rate: project.sample_rate,
             })
         });
-        match Playback::start_pattern(
+        let bars = if self.arrangement_mode {
+            project.arrangement.clone()
+        } else {
+            Vec::new()
+        };
+        match Playback::start_arrangement(
             samples,
             project.pattern.clone(),
+            bars.clone(),
             project.bpm,
             None,
             project.master_volume,
         ) {
             Ok(playback) => {
                 self.playback = Some(playback);
+                self.playback_bars = bars;
                 self.playing = true;
-                self.notice(
-                    "Playing Pattern 01. Space pauses; stop returns to the first step.",
-                    false,
-                );
+                self.notice(playing_notice, false);
             }
             Err(error) => self.notice(format!("Cannot start audio: {error}"), true),
         }
@@ -500,7 +525,7 @@ impl eframe::App for Workspace {
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         ui.set_min_width(720.0);
-                        self.timeline(ui);
+                        self.sequence_view(ui);
                         self.rack(ui);
                         self.inspector(ui);
                     });

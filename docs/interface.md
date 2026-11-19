@@ -86,6 +86,20 @@ Keyboard: Space plays/pauses when no text control is editing; Ctrl+S saves,
 Ctrl+Z undoes, Ctrl+Shift+Z redoes, and Ctrl+Q closes. These use Command on macOS.
 Smaller windows scroll the workspace; the minimum size is 1040×740.
 
+## Arrangement
+
+Use the **Arrangement** tab above the step sequencer to edit and loop the
+saved bar order. **+ Pattern** inserts a bar that follows edits to the main
+pattern. **+ Variation** captures the current pattern as an independent bar.
+**+ Rest** adds a bar with no new hits.
+
+Select a bar to move, replace or remove it. Double-click a bar to seek while
+the transport is active. The highlighted bar follows playback. Switching
+tabs or changing the bar order stops playback. Press Play to hear the new
+sequence. Main-pattern, tempo and volume edits can still update a running
+session. The whole arrangement is saved with the project and each bar edit
+is one undo action.
+
 ## Run and verification
 
 ```sh

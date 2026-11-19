@@ -19,7 +19,7 @@ Pattern playback accepts transport commands; Enter quits.
 A native studio workspace provides a four-bar pattern monitor, a sample browser,
 step and velocity editing, a sampler with rotary controls, stereo peak meters,
 transport, master fader, project storage and undo/redo.
-The workspace builds and 42 tests pass. Playback on real audio hardware remains
+The workspace builds and 43 tests pass. Playback on real audio hardware remains
 unverified. The DAW features
 described below are planned, unless explicitly marked complete.
 
@@ -85,6 +85,7 @@ onto the window. Click steps to build the beat; right-click a step to select it
 for velocity editing. Space plays/pauses, Ctrl+S saves, Ctrl+Z undoes and
 Ctrl+Shift+Z redoes. The native interface uses eframe/egui with OpenGL on Linux
 X11 or Wayland; CLI playback can still be built without the `gui` feature.
+The Arrangement tab edits the saved bar order and loops it through the transport.
 See [workspace controls, design and runtime requirements](docs/interface.md).
 
 ![OxideDAW pattern workspace](docs/images/workspace.png)
