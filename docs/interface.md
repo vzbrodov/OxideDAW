@@ -104,6 +104,17 @@ sequence. Main-pattern, tempo and volume edits can still update a running
 session. The whole arrangement is saved with the project and each bar edit
 is one undo action.
 
+## Export a WAV
+
+Choose **File → Export WAV** and enter a new destination path. Export captures
+the current edits, including unsaved ones. It renders the arrangement, or
+one main pattern when the arrangement is empty, with any sample tails.
+The stereo PCM file uses the project sample rate and 16-bit samples.
+
+Export runs in the background and reports completion in the status bar.
+Unassigned tracks are silent. Assigned files that cannot be read are reported,
+and an existing destination is preserved.
+
 ## Run and verification
 
 ```sh

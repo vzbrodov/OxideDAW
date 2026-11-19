@@ -5,6 +5,7 @@ mod session;
 mod skin;
 mod theme;
 mod views;
+mod wav_export;
 mod widgets;
 
 use eframe::egui::{self, pos2, vec2, Align2, FontId, Rect, RichText, Sense, Stroke, StrokeKind};
@@ -46,6 +47,7 @@ pub fn run(path: Option<&Path>) -> ProjectResult<()> {
 enum FileAction {
     Open,
     Save,
+    ExportWav,
 }
 
 struct Workspace {
@@ -73,6 +75,7 @@ struct Workspace {
     error: bool,
     file_action: Option<FileAction>,
     file_input: String,
+    wav_export: Option<wav_export::PendingExport>,
     confirm_close: bool,
     allow_close: bool,
     save_requested: bool,
@@ -115,6 +118,7 @@ impl Workspace {
             error: false,
             file_action: None,
             file_input: String::new(),
+            wav_export: None,
             confirm_close: false,
             allow_close: false,
             save_requested: false,
@@ -369,6 +373,10 @@ impl Workspace {
 
     fn show_file(&mut self, action: FileAction) {
         self.file_action = Some(action);
+        if matches!(action, FileAction::ExportWav) {
+            self.file_input = self.suggested_wav_path().display().to_string();
+            return;
+        }
         self.file_input = self
             .session
             .path
@@ -420,6 +428,7 @@ impl Workspace {
             let title = match action {
                 FileAction::Open => "Open project",
                 FileAction::Save => "Save project",
+                FileAction::ExportWav => "Export WAV",
             };
             egui::Modal::new(egui::Id::new("project-file")).show(ctx, |ui| {
                 ui.set_width(480.0);
@@ -427,7 +436,11 @@ impl Workspace {
                 if matches!(action, FileAction::Open) && self.session.dirty() {
                     ui.label(RichText::new("Opening another project will discard unsaved edits. Cancel and save first to keep them.").color(COPPER));
                 }
-                ui.label("Project file (.oxide.json)");
+                ui.label(if matches!(action, FileAction::ExportWav) {
+                    "Output file (.wav)"
+                } else {
+                    "Project file (.oxide.json)"
+                });
                 ui.add(egui::TextEdit::singleline(&mut self.file_input).desired_width(f32::INFINITY));
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
@@ -436,9 +449,13 @@ impl Workspace {
                         let path = PathBuf::from(self.file_input.trim());
                         match action {
                             FileAction::Open => match Session::open(Some(&path)).and_then(|session| Self::new(session, ctx).map_err(Into::into)) {
-                                Ok(workspace) => { *self = workspace; }
+                                Ok(mut workspace) => {
+                                    workspace.wav_export = self.wav_export.take();
+                                    *self = workspace;
+                                }
                                 Err(error) => self.notice(format!("Cannot open project: {error}"), true),
                             },
+                            FileAction::ExportWav => self.start_wav_export(path, ctx),
                             FileAction::Save => match self.session.save(&path) {
                                 Ok(()) => { self.file_action = None; self.notice(format!("Saved {}", path.display()), false); }
                                 Err(error) => self.notice(format!("Cannot save: {error}. Choose a new file name if it already exists."), true),
@@ -474,12 +491,15 @@ impl Workspace {
 
 impl eframe::App for Workspace {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if ctx.input(|i| i.viewport().close_requested())
-            && self.session.dirty()
-            && !self.allow_close
-        {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.confirm_close = true;
+        self.poll_wav_export();
+        if ctx.input(|i| i.viewport().close_requested()) {
+            if self.wav_export.is_some() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.notice("Wait for WAV export to finish before closing.", false);
+            } else if self.session.dirty() && !self.allow_close {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.confirm_close = true;
+            }
         }
         if self
             .playback
