@@ -221,7 +221,7 @@ impl Workspace {
                                 Color32::BLACK,
                             );
                             loop_response.on_hover_text(
-                                "One-bar pattern loop: the pattern repeats continuously.",
+                                "Loop the pattern or arrangement selected in the workspace.",
                             );
                             ui.add_space(12.0);
                             let (lcd, _) =
@@ -242,6 +242,12 @@ impl Workspace {
                             );
                             let position =
                                 self.playback.as_ref().map_or(0.0, Playback::position_steps);
+                            let bars = self.session.editor.project().arrangement.len().max(1);
+                            let position = if self.arrangement_mode {
+                                position.rem_euclid((bars * STEPS) as f32)
+                            } else {
+                                position
+                            };
                             let fraction = ((position.fract() * 240.0) as usize).min(239);
                             number(
                                 ui.painter(),
@@ -294,11 +300,15 @@ impl Workspace {
                             ui.add_space(12.0);
                             ui.vertical(|ui| {
                                 ui.label(RichText::new("4/4     1/16").monospace().color(TEXT));
-                                ui.label(
-                                    RichText::new("Pattern 01  •  1 bar")
-                                        .size(10.0)
-                                        .color(MUTED),
-                                );
+                                let source = if self.arrangement_mode {
+                                    format!(
+                                        "Arrangement  •  {bars} bar{}",
+                                        if bars == 1 { "" } else { "s" }
+                                    )
+                                } else {
+                                    "Pattern 01  •  1 bar".into()
+                                };
+                                ui.label(RichText::new(source).size(10.0).color(MUTED));
                             });
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
@@ -932,10 +942,7 @@ impl Workspace {
         );
         let gap = 5.0;
         let pad_width = (rect.width() - labels - 24.0 - 15.0 * gap) / STEPS as f32;
-        let play_step = self
-            .playback
-            .as_ref()
-            .map(|p| p.position_steps() as usize % STEPS);
+        let play_step = self.main_pattern_play_step();
         for step in 0..STEPS {
             let x = rect.left() + labels + 12.0 + step as f32 * (pad_width + gap);
             number(
