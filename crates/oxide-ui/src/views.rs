@@ -110,6 +110,16 @@ impl Workspace {
                             self.show_file(FileAction::Save);
                             ui.close();
                         }
+                        if ui
+                            .add_enabled(
+                                self.wav_export.is_none(),
+                                egui::Button::new("Export WAV…"),
+                            )
+                            .clicked()
+                        {
+                            self.show_file(FileAction::ExportWav);
+                            ui.close();
+                        }
                         ui.separator();
                         if ui.button("Close    Ctrl+Q").clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
