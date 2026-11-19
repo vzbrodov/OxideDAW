@@ -19,7 +19,7 @@ Pattern playback accepts transport commands; Enter quits.
 A native studio workspace provides a four-bar pattern monitor, a sample browser,
 step and velocity editing, a sampler with rotary controls, stereo peak meters,
 transport, master fader, project storage and undo/redo.
-The workspace builds and 41 tests pass. Playback on real audio hardware remains
+The workspace builds and 42 tests pass. Playback on real audio hardware remains
 unverified. The DAW features
 described below are planned, unless explicitly marked complete.
 
@@ -60,7 +60,9 @@ play
 quit
 ```
 
-`seek` selects step 0..15, cuts existing sample tails, and preserves play/pause.
+`seek` selects a zero-based step, cuts existing sample tails, and preserves
+play/pause. Pattern playback accepts 0..15. With `--arrangement`, step 16 is
+the start of bar two and the final step depends on the number of bars.
 The destination triggers when playback resumes. `bpm` accepts 1..999 and preserves
 musical position; sounding samples keep their playback rate. `pause` freezes
 sample tails, and `stop` clears them and resets to step 0. Enter, `quit`, or EOF
@@ -94,6 +96,8 @@ See [workspace controls, design and runtime requirements](docs/interface.md).
 cargo run -p oxide-app -- project-new beat.oxide.json kick.wav snare.wav hat.wav perc.wav 137 0.3
 cargo run -p oxide-app -- project-info beat.oxide.json
 cargo run -p oxide-app -- project-play beat.oxide.json
+# Loop the complete saved arrangement:
+cargo run -p oxide-app -- project-play beat.oxide.json --arrangement
 # Optional output device:
 cargo run -p oxide-app -- project-play beat.oxide.json "device name"
 ```
@@ -105,6 +109,9 @@ the project directory; external samples are stored as absolute paths. Audio is
 referenced, so move the media together with the JSON to keep a portable project.
 Missing media is reported by `project-info` and does not prevent document loading.
 `project-play` reports the affected track and file before opening an audio stream.
+With `--arrangement`, `project-play` loops the saved bars at the device's sample
+rate. An empty arrangement loops the main pattern. Unassigned tracks are silent
+in arrangement mode, and missing assigned media is reported before playback.
 See [the project format](docs/project-format.md) for editing and storage details.
 
 ### Exporting a beat

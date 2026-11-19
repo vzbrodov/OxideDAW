@@ -18,10 +18,7 @@ pub fn parse(line: &str) -> Result<PlaybackCommand, &'static str> {
         (Some("seek"), Some(value)) => {
             let step = value
                 .parse()
-                .map_err(|_| "Expected step between 0 and 15")?;
-            if step >= 16 {
-                return Err("Expected step between 0 and 15");
-            }
+                .map_err(|_| "Expected a nonnegative step index")?;
             PlaybackCommand::SeekStep(step)
         }
         _ => return Err("Expected play, pause, stop, bpm N, seek N, or quit"),
@@ -39,7 +36,7 @@ mod tests {
     #[test]
     fn parses_transport_controls_and_rejects_invalid_input() {
         assert_eq!(parse(" bpm 137.25 "), Ok(PlaybackCommand::SetBpm(137.25)));
-        assert_eq!(parse("seek 15"), Ok(PlaybackCommand::SeekStep(15)));
+        assert_eq!(parse("seek 32"), Ok(PlaybackCommand::SeekStep(32)));
         assert_eq!(parse("play"), Ok(PlaybackCommand::Play));
         for line in [
             "bpm NaN",
@@ -47,7 +44,6 @@ mod tests {
             "bpm 0",
             "bpm 1000",
             "seek -1",
-            "seek 16",
             "seek 1.5",
             "pause now",
             "bpm 120 extra",

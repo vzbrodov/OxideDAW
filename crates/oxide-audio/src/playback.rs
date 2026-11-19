@@ -1,7 +1,7 @@
 //! Minimal playback with predecoded audio; callback performs no allocation or I/O.
 use crate::pattern::PatternRenderer;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use oxide_core::sequencer::{Pattern, TRACKS};
+use oxide_core::sequencer::{sequence_step_count, ArrangementBar, Pattern, TRACKS};
 use oxide_dsp::sample::AudioSample;
 use ringbuf::{
     traits::{Consumer, Producer, Split},
@@ -43,17 +43,17 @@ pub struct Playback {
     pub failed: Arc<AtomicBool>,
     commands: HeapProd<PlaybackCommand>,
     sample_rate: u32,
-    pattern: bool,
+    step_count: usize,
     position_steps: Arc<AtomicU32>,
     peaks: Arc<[AtomicU32; TRACKS + 2]>,
 }
 
 impl Playback {
-    /// Queue a pattern control without blocking. A full queue rejects the new command;
+    /// Queue a sequencer control without blocking. A full queue rejects the new command;
     /// callers can retry later. Successful enqueue does not mean it was rendered yet.
     pub fn command(&mut self, command: PlaybackCommand) -> Result<()> {
-        if !self.pattern {
-            return Err("Transport commands require pattern playback".into());
+        if self.step_count == 0 {
+            return Err("Transport commands require sequencer playback".into());
         }
         match &command {
             PlaybackCommand::SetState { bpm, volume, .. } => {
@@ -65,8 +65,8 @@ impl Playback {
             PlaybackCommand::SetBpm(bpm) => {
                 oxide_core::sequencer::Transport::new(self.sample_rate, *bpm)?;
             }
-            PlaybackCommand::SeekStep(step) if *step >= oxide_core::sequencer::STEPS => {
-                return Err("Step must be between 0 and 15".into());
+            PlaybackCommand::SeekStep(step) if *step >= self.step_count => {
+                return Err(format!("Expected step between 0 and {}", self.step_count - 1).into());
             }
             _ => {}
         }
@@ -108,6 +108,18 @@ impl Playback {
         device_name: Option<&str>,
         volume: f32,
     ) -> Result<Self> {
+        Self::start_arrangement(samples, pattern, Vec::new(), bpm, device_name, volume)
+    }
+
+    /// Loop a fixed prepared arrangement. An empty list loops the main pattern.
+    pub fn start_arrangement(
+        samples: [AudioSample; TRACKS],
+        pattern: Pattern,
+        arrangement: Vec<ArrangementBar>,
+        bpm: f64,
+        device_name: Option<&str>,
+        volume: f32,
+    ) -> Result<Self> {
         for sample in &samples {
             sample.validate()?;
         }
@@ -118,7 +130,10 @@ impl Playback {
             move |rate| {
                 let mut renderer = PatternRenderer::new(samples, pattern, rate, bpm, volume)?;
                 renderer.play();
-                Ok(Source::Pattern(Box::new(renderer)))
+                Ok(Source::Pattern {
+                    renderer: Box::new(renderer),
+                    arrangement,
+                })
             },
             volume,
         )
@@ -146,7 +161,10 @@ impl Playback {
             return Err("Invalid device configuration".into());
         }
         let source = create(config.sample_rate.0)?;
-        let pattern = matches!(&source, Source::Pattern(_));
+        let step_count = match &source {
+            Source::Pattern { arrangement, .. } => sequence_step_count(arrangement),
+            Source::Sample(_) => 0,
+        };
         let (commands, consumer) = HeapRb::new(COMMAND_CAPACITY).split();
         let failed = Arc::new(AtomicBool::new(false));
         let position_steps = Arc::new(AtomicU32::new(0.0_f32.to_bits()));
@@ -187,7 +205,7 @@ impl Playback {
             failed,
             commands,
             sample_rate: config.sample_rate.0,
-            pattern,
+            step_count,
             position_steps,
             peaks,
         })
@@ -232,7 +250,7 @@ fn build<T: cpal::SizedSample + cpal::FromSample<f32>>(
                     }
                 }
             }
-            if let Source::Pattern(renderer) = &source {
+            if let Source::Pattern { renderer, .. } = &source {
                 position_steps.store(
                     (renderer.position_steps() as f32).to_bits(),
                     Ordering::Relaxed,
@@ -251,7 +269,7 @@ fn build<T: cpal::SizedSample + cpal::FromSample<f32>>(
 
 fn collect_peaks(source: &Source, frames: &[[f32; 2]], peaks: &mut [f32; TRACKS + 2]) {
     match source {
-        Source::Pattern(renderer) => {
+        Source::Pattern { renderer, .. } => {
             for (peak, value) in peaks.iter_mut().zip(renderer.peaks()) {
                 *peak = peak.max(value);
             }
@@ -271,13 +289,17 @@ fn apply_commands(source: &mut Source, commands: &mut HeapCons<PlaybackCommand>)
         let Some(command) = commands.try_pop() else {
             break;
         };
-        if let Source::Pattern(renderer) = source {
+        if let Source::Pattern {
+            renderer,
+            arrangement,
+        } = source
+        {
             match command {
                 PlaybackCommand::Play => renderer.play(),
                 PlaybackCommand::Pause => renderer.pause(),
                 PlaybackCommand::Stop => renderer.stop(),
                 PlaybackCommand::SeekStep(step) => {
-                    let _ = renderer.seek_step(step);
+                    let _ = renderer.seek_sequence_step(step, arrangement);
                 }
                 PlaybackCommand::SetBpm(bpm) => {
                     let _ = renderer.set_bpm(bpm);
@@ -296,7 +318,10 @@ fn apply_commands(source: &mut Source, commands: &mut HeapCons<PlaybackCommand>)
 
 enum Source {
     Sample(Renderer),
-    Pattern(Box<PatternRenderer>),
+    Pattern {
+        renderer: Box<PatternRenderer>,
+        arrangement: Vec<ArrangementBar>,
+    },
 }
 
 impl Source {
@@ -308,7 +333,10 @@ impl Source {
                     *frame = [left, right];
                 }
             }
-            Self::Pattern(renderer) => renderer.render(output),
+            Self::Pattern {
+                renderer,
+                arrangement,
+            } => renderer.render_sequence(output, arrangement),
         }
     }
 }
@@ -360,7 +388,10 @@ mod tests {
         let mut renderer = PatternRenderer::new(samples, pattern, 8, 120.0, 0.5).unwrap();
         renderer.set_looping(false);
         renderer.play();
-        let mut source = Source::Pattern(Box::new(renderer));
+        let mut source = Source::Pattern {
+            renderer: Box::new(renderer),
+            arrangement: Vec::new(),
+        };
         let mut scratch = [[0.0; 2]; 256];
         let mut peaks = [0.0; TRACKS + 2];
         source.render(&mut scratch);
@@ -394,7 +425,10 @@ mod tests {
         let mut pattern = Pattern::default();
         pattern.set(0, 4, 127).unwrap();
         let renderer = PatternRenderer::new(samples, pattern, 8, 120.0, 1.0).unwrap();
-        let mut source = Source::Pattern(Box::new(renderer));
+        let mut source = Source::Pattern {
+            renderer: Box::new(renderer),
+            arrangement: Vec::new(),
+        };
         let (mut producer, mut consumer) = HeapRb::new(COMMAND_CAPACITY).split();
         for command in [
             PlaybackCommand::Stop,
@@ -422,6 +456,62 @@ mod tests {
         apply_commands(&mut source, &mut consumer);
         source.render(&mut output);
         assert_eq!(output[0], [0.25; 2]);
+    }
+
+    #[test]
+    fn arrangement_controls_seek_across_bars_and_loop_without_resetting_voices() {
+        // At 8 Hz and 120 BPM, each step occupies one frame.
+        let samples = std::array::from_fn(|track| AudioSample {
+            samples: vec![if track == 0 { 0.25 } else { 0.5 }; 4],
+            channels: 1,
+            sample_rate: 8,
+        });
+        let mut main = Pattern::default();
+        main.set(0, 0, 127).unwrap();
+        main.set(0, 15, 127).unwrap();
+        let mut variation = Pattern::default();
+        variation.set(1, 0, 127).unwrap();
+        variation.set(1, 15, 127).unwrap();
+        let arrangement = vec![
+            ArrangementBar::Main {},
+            ArrangementBar::Rest {},
+            ArrangementBar::Variation { pattern: variation },
+        ];
+        let mut renderer = PatternRenderer::new(samples, main, 8, 120.0, 1.0).unwrap();
+        renderer.play();
+        let mut source = Source::Pattern {
+            renderer: Box::new(renderer),
+            arrangement,
+        };
+        let (mut producer, mut consumer) = HeapRb::new(COMMAND_CAPACITY).split();
+        let mut command = |source: &mut Source, command| {
+            producer.try_push(command).unwrap();
+            apply_commands(source, &mut consumer);
+        };
+        let mut bar = [[0.0; 2]; 16];
+        source.render(&mut bar);
+        assert_eq!(bar[15], [0.25; 2]);
+
+        let mut frame = [[0.0; 2]; 1];
+        command(&mut source, PlaybackCommand::Pause);
+        source.render(&mut frame);
+        assert_eq!(frame[0], [0.0; 2]);
+        command(&mut source, PlaybackCommand::Play);
+        source.render(&mut frame);
+        assert_eq!(frame[0], [0.25; 2]); // The preceding hit carries into the rest.
+
+        command(&mut source, PlaybackCommand::SeekStep(32));
+        source.render(&mut frame);
+        assert_eq!(frame[0], [0.5; 2]); // The seek cuts the old voice.
+        source.render(&mut bar);
+        assert_eq!(bar[15], [0.75; 2]); // The variation tail overlaps the first hit.
+
+        command(&mut source, PlaybackCommand::Stop);
+        source.render(&mut frame);
+        assert_eq!(frame[0], [0.0; 2]);
+        command(&mut source, PlaybackCommand::Play);
+        source.render(&mut frame);
+        assert_eq!(frame[0], [0.25; 2]);
     }
 
     #[test]

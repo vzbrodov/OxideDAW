@@ -29,8 +29,9 @@ For a portable session, put the WAVs next to the JSON or in a subdirectory, then
 move that directory as a unit. Manually written relative paths may also use `..`.
 
 A missing or unassigned sample does not stop `Project::load` or `project-info`.
-`project-play` requires all four samples and reports a track ID, name and file
-path when decoding fails. All decoding happens before starting audio playback.
+Pattern mode requires all four samples. Arrangement playback and export treat
+unassigned tracks as silent. Assigned files must decode successfully, with
+errors identifying the track and path. Decoding finishes before playback.
 
 ## Arrangement and export
 
@@ -44,7 +45,11 @@ Each entry has one of these shapes.
 | `{"type":"rest"}` | Advance one bar without starting new hits. Already sounding samples can ring through it. |
 
 `project-export` renders all bars in order and drains any remaining sample
-tails at the end. `project-play` loops the main pattern.
+tails at the end. `project-play` loops the main pattern by default.
+`project-play PROJECT --arrangement [DEVICE]` loops the complete arrangement
+at the audio device's sample rate. Voice tails can overlap the wrap into
+the first bar. In this mode, `seek` counts steps across bars starting at zero.
+It clears the current voices and preserves play/pause.
 
 ## Editing
 
