@@ -112,6 +112,10 @@ impl PatternRenderer {
         self.transport.position_steps()
     }
 
+    pub(crate) fn one_shot_end_frame(&self) -> u64 {
+        self.transport.one_shot_end_frame()
+    }
+
     /// A small validated snapshot swaps atomically between render blocks.
     pub fn set_state(
         &mut self,
@@ -159,6 +163,29 @@ impl PatternRenderer {
                 tracks[event.track].trigger(event.velocity);
             });
         mix(tracks, rate, volume, peaks, &mut output[cursor..]);
+    }
+
+    /// After the one-shot boundary, return only frames with remaining voices.
+    pub(crate) fn render_tail(&mut self, output: &mut [[f32; 2]]) -> usize {
+        debug_assert!(!self.transport.is_playing() && !self.paused);
+        self.peaks.fill(0.0);
+        for (index, frame) in output.iter_mut().enumerate() {
+            if !self
+                .tracks
+                .iter()
+                .any(|track| track.voices.iter().any(SamplerVoice::is_active))
+            {
+                return index;
+            }
+            mix(
+                &mut self.tracks,
+                self.sample_rate,
+                self.volume,
+                &mut self.peaks,
+                std::slice::from_mut(frame),
+            );
+        }
+        output.len()
     }
 }
 

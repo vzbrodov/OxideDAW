@@ -2,4 +2,5 @@
 pub mod edit;
 pub mod project;
 pub mod sequencer;
+pub mod storage;
 pub use project::Project;

@@ -19,7 +19,7 @@ Pattern playback accepts transport commands; Enter quits.
 A native studio workspace provides a four-bar pattern monitor, a sample browser,
 step and velocity editing, a sampler with rotary controls, stereo peak meters,
 transport, master fader, project storage and undo/redo.
-The workspace builds and 38 tests pass; real audio hardware playback remains
+The workspace builds and 40 tests pass. Playback on real audio hardware remains
 unverified. The DAW features
 described below are planned, unless explicitly marked complete.
 
@@ -106,6 +106,17 @@ referenced, so move the media together with the JSON to keep a portable project.
 Missing media is reported by `project-info` and does not prevent document loading.
 `project-play` reports the affected track and file before opening an audio stream.
 See [the project format](docs/project-format.md) for editing and storage details.
+
+### Exporting a beat
+
+```sh
+cargo run -p oxide-app -- project-export beat.oxide.json beat.wav
+```
+
+Export renders one 16-step pattern plus any ringing sample tails to stereo
+16-bit PCM at the project's sample rate. It uses the saved BPM, step velocities
+and master volume and runs without an audio device. Unassigned tracks are
+silent. Missing assigned media causes an error. The destination must be new.
 
 ### Editing a beat
 

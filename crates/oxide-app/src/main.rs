@@ -1,6 +1,7 @@
 //! CLI audio prototype. All project I/O and decoding precede audio playback.
 mod controls;
 mod editor;
+use oxide_audio::export::export_pattern;
 use oxide_audio::playback::{output_devices, Playback};
 use oxide_core::{
     sequencer::{Pattern, TRACKS},
@@ -23,6 +24,7 @@ const HELP: &str = "Usage:
   oxide-app project-new <project.oxide.json> <kick.wav> <snare.wav> <hat.wav> <perc.wav> [bpm] [volume: 0..1]
   oxide-app project-info <project.oxide.json>
   oxide-app project-play <project.oxide.json> [device name]
+  oxide-app project-export <project.oxide.json> <output.wav>
   oxide-app project-edit <project.oxide.json>
 pattern and project-new use a preset 16-step beat. Default BPM: 120, volume: 0.5.
 play runs once, then outputs silence; patterns loop. Enter stops playback.
@@ -145,7 +147,7 @@ fn run() -> Result<()> {
         Some("project-play") if (2..=3).contains(&args.len()) => {
             let path = Path::new(&args[1]);
             let project = Project::load(path)?;
-            let samples = load_project_samples(&project, path)?;
+            let samples = load_project_samples(&project, path, false)?;
             let playback = Playback::start_pattern(
                 samples,
                 project.pattern,
@@ -158,6 +160,15 @@ fn run() -> Result<()> {
                 project.name, project.bpm
             );
             wait_for_stop(playback, true)?;
+        }
+        Some("project-export") if args.len() == 3 => {
+            let path = Path::new(&args[1]);
+            let destination = Path::new(&args[2]);
+            let project = Project::load(path)?;
+            let samples = load_project_samples(&project, path, true)?;
+            export_pattern(&project, samples, destination)
+                .map_err(|error| format!("Cannot export {}: {error}", destination.display()))?;
+            println!("Exported {}", destination.display());
         }
         Some("project-edit") if args.len() == 2 => editor::run(Path::new(&args[1]))?,
         Some("--help") if args.len() == 1 => println!("{HELP}"),
@@ -180,12 +191,23 @@ fn load_samples(paths: &[String]) -> Result<[AudioSample; TRACKS]> {
         .map_err(|_| "Expected four samples".into())
 }
 
-fn load_project_samples(project: &Project, path: &Path) -> Result<[AudioSample; TRACKS]> {
+fn load_project_samples(
+    project: &Project,
+    path: &Path,
+    allow_unassigned: bool,
+) -> Result<[AudioSample; TRACKS]> {
     let samples: Vec<_> = project
         .tracks
         .iter()
         .enumerate()
         .map(|(index, track)| {
+            if allow_unassigned && track.sample.is_none() {
+                return Ok(AudioSample {
+                    samples: vec![0.0],
+                    channels: 1,
+                    sample_rate: project.sample_rate,
+                });
+            }
             let sample_path = project.sample_path(path, index)?;
             AudioSample::load(&sample_path).map_err(|error| {
                 format!(

@@ -1,17 +1,16 @@
 //! Versioned project documents. File I/O and validation belong on the control thread.
 use crate::sequencer::{Pattern, Transport, TRACKS};
+use crate::storage::{parent_directory, write_file};
 use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
-    fs::{self, OpenOptions},
+    fs,
     io::Write,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
 };
 
 pub const FORMAT_VERSION: u32 = 1;
 pub type ProjectResult<T> = Result<T, Box<dyn Error>>;
-static TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -157,57 +156,20 @@ impl Project {
 
     fn write_document(&self, path: &Path, replace: bool) -> ProjectResult<()> {
         let json = self.to_json()?;
-        let parent = parent_directory(path);
-        let name = path.file_name().ok_or("Expected a project file path")?;
-        let mut temporary_name = std::ffi::OsString::from(".");
-        temporary_name.push(name);
-        temporary_name.push(format!(
-            ".{}.{}.tmp",
-            std::process::id(),
-            TEMP_ID.fetch_add(1, Ordering::Relaxed)
-        ));
-        let temporary_path = parent.join(temporary_name);
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary_path)?;
-        let temporary = TemporaryFile(temporary_path);
-        // The closure owns the open file, closing it before cleanup on errors
-        // (Windows cannot remove an open temporary file).
-        (|| -> std::io::Result<()> {
-            file.write_all(json.as_bytes())?;
-            file.sync_all()?;
-            drop(file);
-            if replace {
-                fs::rename(&temporary.0, path)
-            } else {
-                fs::hard_link(&temporary.0, path)
-            }
-        })()?;
-        drop(temporary);
-        // Persist the directory entry too on the first supported platform.
-        #[cfg(unix)]
-        fs::File::open(parent)?.sync_all()?;
+        if path.file_name().is_none() {
+            return Err("Expected a project file path".into());
+        }
+        write_file(path, replace, |file| file.write_all(json.as_bytes()))?;
         Ok(())
-    }
-}
-
-fn parent_directory(path: &Path) -> &Path {
-    path.parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or(Path::new("."))
-}
-
-struct TemporaryFile(PathBuf);
-impl Drop for TemporaryFile {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
     struct TestDirectory(PathBuf);
     impl TestDirectory {

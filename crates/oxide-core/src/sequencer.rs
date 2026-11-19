@@ -168,6 +168,11 @@ impl Transport {
             .round() as u64
     }
 
+    /// Scheduled end of the first pattern, using the current tempo anchor.
+    pub fn one_shot_end_frame(&self) -> u64 {
+        self.step_frame(STEPS as u64)
+    }
+
     /// Emit events for [position, position + frames). Caller supplies the sink;
     /// scheduling itself neither allocates nor locks. Stop resets; pause resumes.
     pub fn process(&mut self, frames: usize, pattern: &Pattern, mut emit: impl FnMut(Trigger)) {
@@ -195,8 +200,8 @@ impl Transport {
             self.next_step += 1;
         }
         self.position = end;
-        if !self.looping && end >= self.step_frame(STEPS as u64) {
-            self.position = self.step_frame(STEPS as u64);
+        if !self.looping && end >= self.one_shot_end_frame() {
+            self.position = self.one_shot_end_frame();
             self.playing = false;
         }
     }

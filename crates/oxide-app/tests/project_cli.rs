@@ -28,20 +28,23 @@ impl Fixture {
             .unwrap()
     }
     fn wave(&self) {
-        // Minimal one-frame PCM WAV, 16-bit mono, 8 kHz.
+        self.wave_samples(1, &[1000]);
+    }
+    fn wave_samples(&self, channels: u16, samples: &[i16]) {
+        let data_size = samples.len() as u32 * 2;
         let mut wav = Vec::from(&b"RIFF"[..]);
-        wav.extend(38_u32.to_le_bytes());
+        wav.extend((36 + data_size).to_le_bytes());
         wav.extend(b"WAVEfmt ");
         wav.extend(16_u32.to_le_bytes());
         wav.extend(1_u16.to_le_bytes());
-        wav.extend(1_u16.to_le_bytes());
+        wav.extend(channels.to_le_bytes());
         wav.extend(8000_u32.to_le_bytes());
-        wav.extend(16000_u32.to_le_bytes());
-        wav.extend(2_u16.to_le_bytes());
+        wav.extend((16000 * u32::from(channels)).to_le_bytes());
+        wav.extend((channels * 2).to_le_bytes());
         wav.extend(16_u16.to_le_bytes());
         wav.extend(b"data");
-        wav.extend(2_u32.to_le_bytes());
-        wav.extend(1000_i16.to_le_bytes());
+        wav.extend(data_size.to_le_bytes());
+        wav.extend(samples.iter().flat_map(|sample| sample.to_le_bytes()));
         fs::write(self.0.join("sample.wav"), wav).unwrap();
     }
     fn edit(&self, input: &str) -> Output {
@@ -61,6 +64,78 @@ impl Fixture {
             .unwrap();
         child.wait_with_output().unwrap()
     }
+}
+
+#[test]
+fn export_resamples_and_drains_the_last_hit_at_fractional_tempo() {
+    let fixture = Fixture::new();
+    fixture.wave_samples(2, &[8192, -16384].repeat(1550));
+    let mut project = Project {
+        bpm: 137.25,
+        sample_rate: 16000,
+        master_volume: 0.5,
+        ..Project::default()
+    };
+    project.tracks[0].sample = Some("sample.wav".into());
+    project.pattern.set(0, 15, 64).unwrap();
+    project.pattern.set(1, 0, 127).unwrap(); // Unassigned channel.
+    project
+        .save_new(&fixture.0.join("beat.oxide.json"))
+        .unwrap();
+
+    let args = ["project-export", "beat.oxide.json", "beat.wav"];
+    let result = fixture.run(&args);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let path = fixture.0.join("beat.wav");
+    let exported = oxide_dsp::sample::AudioSample::load(&path).unwrap();
+    assert_eq!(exported.channels, 2);
+    assert_eq!(exported.sample_rate, 16000);
+    let hit_start = 26230;
+    let end = hit_start + 3100;
+    assert_eq!(exported.samples.len(), end * 2);
+    assert!(exported.samples[..hit_start * 2].iter().all(|&s| s == 0.0));
+    let (tail, remainder) = exported.samples[hit_start * 2..].as_chunks::<2>();
+    assert!(remainder.is_empty());
+    assert!(tail
+        .iter()
+        .all(|&frame| frame == [2064.0 / 32768.0, -4128.0 / 32768.0]));
+
+    let original = fs::read(&path).unwrap();
+    assert!(!fixture.run(&args).status.success());
+    assert_eq!(fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn export_keeps_a_full_silent_bar_and_reports_missing_assigned_media() {
+    let fixture = Fixture::new();
+    let path = fixture.0.join("beat.oxide.json");
+    let mut project = Project {
+        bpm: 120.0,
+        sample_rate: 8000,
+        ..Project::default()
+    };
+    project.save_new(&path).unwrap();
+    assert!(fixture
+        .run(&["project-export", "beat.oxide.json", "silent.wav"])
+        .status
+        .success());
+    let exported = oxide_dsp::sample::AudioSample::load(&fixture.0.join("silent.wav")).unwrap();
+    assert_eq!(exported.samples, vec![0.0; 16000 * 2]);
+
+    project.tracks[0].sample = Some("missing.wav".into());
+    project.save(&path).unwrap();
+    let result = fixture.run(&["project-export", "beat.oxide.json", "missing.wav"]);
+    assert_eq!(result.status.code(), Some(1));
+    let message = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        message.contains("Track 1") && message.contains("missing.wav"),
+        "{message}"
+    );
+    assert!(!fixture.0.join("missing.wav").exists());
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
