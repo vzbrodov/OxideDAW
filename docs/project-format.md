@@ -17,6 +17,7 @@ extension is `.oxide.json`. Media is referenced separately and never embedded.
 | `pattern.steps` | Exactly four arrays of sixteen integer velocities. `0` disables the step; `1..127` triggers a sample. |
 | `arrangement` | Optional list of bars, in playback order. An omitted or empty list exports the main pattern once. |
 
+Project JSON is limited to 16 MiB, including whitespace.
 Unknown fields, invalid array sizes, malformed JSON and out-of-range values are
 rejected. The earlier three-field `Project` Rust scaffold did not define an
 on-disk format; no migration from that scaffold is provided.

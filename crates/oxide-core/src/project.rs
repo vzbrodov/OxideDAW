@@ -5,11 +5,13 @@ use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
     fs,
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
 };
 
 pub const FORMAT_VERSION: u32 = 2;
+const MAX_PROJECT_BYTES: usize = 16 * 1024 * 1024;
+const PROJECT_TOO_LARGE: &str = "Project JSON exceeds the 16 MiB size limit";
 pub type ProjectResult<T> = Result<T, Box<dyn Error>>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,6 +94,9 @@ impl Project {
     }
 
     pub fn from_json(json: &str) -> ProjectResult<Self> {
+        if json.len() > MAX_PROJECT_BYTES {
+            return Err(PROJECT_TOO_LARGE.into());
+        }
         let mut project: Self = serde_json::from_str(json)?;
         if project.format_version == 1 && project.arrangement.is_empty() {
             project.format_version = FORMAT_VERSION;
@@ -102,12 +107,27 @@ impl Project {
 
     pub fn to_json(&self) -> ProjectResult<String> {
         self.validate()?;
-        Ok(serde_json::to_string_pretty(self)? + "\n")
+        let json = serde_json::to_string_pretty(self)? + "\n";
+        if json.len() > MAX_PROJECT_BYTES {
+            return Err(PROJECT_TOO_LARGE.into());
+        }
+        Ok(json)
     }
 
     /// Missing media does not prevent loading the musical document.
     pub fn load(path: &Path) -> ProjectResult<Self> {
-        Self::from_json(&fs::read_to_string(path)?)
+        let file = fs::File::open(path)?;
+        if file.metadata()?.len() > MAX_PROJECT_BYTES as u64 {
+            return Err(PROJECT_TOO_LARGE.into());
+        }
+        // Bound the read even if the file grows after checking metadata.
+        let mut bytes = Vec::new();
+        file.take(MAX_PROJECT_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)?;
+        if bytes.len() > MAX_PROJECT_BYTES {
+            return Err(PROJECT_TOO_LARGE.into());
+        }
+        Self::from_json(std::str::from_utf8(&bytes)?)
     }
 
     /// Resolve media without using the process working directory as its base.
@@ -194,6 +214,34 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn project_size_limit_preserves_existing_document() {
+        let dir = TestDirectory::new();
+        let path = dir.0.join("project.oxide.json");
+        let project = Project::default();
+        let mut json = project.to_json().unwrap().into_bytes();
+        json.resize(MAX_PROJECT_BYTES, b' ');
+        fs::write(&path, &json).unwrap();
+        assert_eq!(Project::load(&path).unwrap(), project);
+
+        let oversized = Project {
+            name: "x".repeat(MAX_PROJECT_BYTES),
+            ..project
+        };
+        assert_eq!(
+            oversized.save(&path).unwrap_err().to_string(),
+            PROJECT_TOO_LARGE
+        );
+        assert_eq!(fs::read(&path).unwrap(), json);
+
+        json.push(b' ');
+        fs::write(&path, &json).unwrap();
+        assert_eq!(
+            Project::load(&path).unwrap_err().to_string(),
+            PROJECT_TOO_LARGE
+        );
     }
 
     #[test]
