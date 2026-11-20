@@ -19,7 +19,7 @@ Pattern playback accepts transport commands; Enter quits.
 A native studio workspace provides a four-channel rhythm panel, a sample browser,
 step and velocity editing, a sampler with rotary controls, stereo peak meters,
 transport, master fader, project storage and undo/redo.
-The workspace builds and 44 tests pass. Playback on real audio hardware remains
+The workspace builds and 45 tests pass. Playback on real audio hardware remains
 unverified. The DAW features
 described below are planned, unless explicitly marked complete.
 
