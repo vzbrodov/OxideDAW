@@ -47,6 +47,7 @@ pub fn run(path: Option<&Path>) -> ProjectResult<()> {
 enum FileAction {
     Open,
     Save,
+    SaveAndClose,
     ExportWav,
 }
 
@@ -360,14 +361,26 @@ impl Workspace {
         }
     }
 
-    fn save(&mut self) {
+    fn save(&mut self, ctx: &egui::Context, close_after: bool) {
         if let Some(path) = self.session.path.clone() {
-            match self.session.save(&path) {
-                Ok(()) => self.notice(format!("Saved {}", path.display()), false),
-                Err(error) => self.notice(format!("Cannot save: {error}"), true),
-            }
+            self.save_to(ctx, &path, close_after);
+        } else if close_after {
+            self.show_file(FileAction::SaveAndClose);
         } else {
             self.show_file(FileAction::Save);
+        }
+    }
+
+    fn save_to(&mut self, ctx: &egui::Context, path: &Path, close_after: bool) {
+        match self.session.save(path) {
+            Ok(()) => {
+                self.file_action = None;
+                self.notice(format!("Saved {}", path.display()), false);
+                if close_after {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+            Err(error) => self.notice(format!("Cannot save: {error}"), true),
         }
     }
 
@@ -428,6 +441,7 @@ impl Workspace {
             let title = match action {
                 FileAction::Open => "Open project",
                 FileAction::Save => "Save project",
+                FileAction::SaveAndClose => "Save and close",
                 FileAction::ExportWav => "Export WAV",
             };
             egui::Modal::new(egui::Id::new("project-file")).show(ctx, |ui| {
@@ -456,10 +470,9 @@ impl Workspace {
                                 Err(error) => self.notice(format!("Cannot open project: {error}"), true),
                             },
                             FileAction::ExportWav => self.start_wav_export(path, ctx),
-                            FileAction::Save => match self.session.save(&path) {
-                                Ok(()) => { self.file_action = None; self.notice(format!("Saved {}", path.display()), false); }
-                                Err(error) => self.notice(format!("Cannot save: {error}. Choose a new file name if it already exists."), true),
-                            },
+                            FileAction::Save | FileAction::SaveAndClose => {
+                                self.save_to(ctx, &path, matches!(action, FileAction::SaveAndClose));
+                            }
                         }
                     }
                 });
@@ -479,9 +492,9 @@ impl Workspace {
                         self.allow_close = true;
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
-                    if ui.button("Save").clicked() {
+                    if ui.button("Save and close").clicked() {
                         self.confirm_close = false;
-                        self.save();
+                        self.save(ctx, true);
                     }
                 });
             });
@@ -558,7 +571,7 @@ impl eframe::App for Workspace {
             });
         if self.save_requested {
             self.save_requested = false;
-            self.save();
+            self.save(ctx, false);
         }
         self.dialogs(ctx);
         if self.playing || self.preview.is_some() || self.levels.iter().any(|v| *v > 0.001) {
@@ -573,4 +586,56 @@ fn is_audio(path: &Path) -> bool {
             .iter()
             .any(|s| ext.eq_ignore_ascii_case(s))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn save_and_close_requires_a_successful_write() {
+        let ctx = egui::Context::default();
+        let mut workspace = Workspace::new(Session::open(None).unwrap(), &ctx).unwrap();
+        let path =
+            std::env::temp_dir().join(format!("oxide-close-{}.oxide.json", std::process::id()));
+        oxide_core::Project::default().save_new(&path).unwrap();
+
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            workspace.save(ctx, true);
+            assert!(matches!(
+                workspace.file_action,
+                Some(FileAction::SaveAndClose)
+            ));
+            workspace.save_to(ctx, &path, true);
+        });
+        assert!(workspace.error);
+        assert!(workspace.session.dirty());
+        assert!(!output.viewport_output[&egui::ViewportId::ROOT]
+            .commands
+            .contains(&egui::ViewportCommand::Close));
+
+        std::fs::remove_file(&path).unwrap();
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            workspace.save_to(ctx, &path, true);
+        });
+        assert!(!workspace.session.dirty());
+        assert!(output.viewport_output[&egui::ViewportId::ROOT]
+            .commands
+            .contains(&egui::ViewportCommand::Close));
+        assert_eq!(oxide_core::Project::load(&path).unwrap().bpm, 120.0);
+
+        workspace
+            .session
+            .editor
+            .apply_batch(&[EditCommand::SetBpm { bpm: 130.0 }])
+            .unwrap();
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            workspace.save(ctx, true);
+        });
+        assert!(output.viewport_output[&egui::ViewportId::ROOT]
+            .commands
+            .contains(&egui::ViewportCommand::Close));
+        assert_eq!(oxide_core::Project::load(&path).unwrap().bpm, 130.0);
+        std::fs::remove_file(&path).unwrap();
+    }
 }

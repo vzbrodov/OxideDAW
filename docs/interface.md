@@ -83,8 +83,9 @@ through the library or source-path control.
 
 Open and Save use explicit file paths. New files refuse to overwrite existing
 files. Saving elsewhere rebases relative media references while preserving the
-meaning of undo snapshots. Closing a changed project opens a save/discard dialog;
-opening another project shows an unsaved-changes warning.
+meaning of undo snapshots. When closing a changed project, **Save and close**
+closes the window after a successful save. A new project prompts for a file path.
+Opening another project shows an unsaved-changes warning.
 
 Keyboard: Space plays/pauses when no text control is editing; Ctrl+S saves,
 Ctrl+Z undoes, Ctrl+Shift+Z redoes, and Ctrl+Q closes. These use Command on macOS.
