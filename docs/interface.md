@@ -87,6 +87,15 @@ meaning of undo snapshots. When closing a changed project, **Save and close**
 closes the window after a successful save. A new project prompts for a file path.
 Opening another project shows an unsaved-changes warning.
 
+On Linux, the desktop checks for unsaved changes every 10 seconds and writes
+changed projects to its recovery directory. It uses
+`$XDG_STATE_HOME/oxidedaw/recovery` or `~/.local/state/oxidedaw/recovery`.
+After an interruption, the next launch offers the most recent available
+snapshot. **Recover project** opens an unsaved copy with its media links intact.
+Use Save to give the copy a new file path. **Later** keeps the snapshot for
+another launch. A successful save or a deliberate discard clears the snapshot
+for the open project.
+
 Keyboard: Space plays/pauses when no text control is editing; Ctrl+S saves,
 Ctrl+Z undoes, Ctrl+Shift+Z redoes, and Ctrl+Q closes. These use Command on macOS.
 Smaller windows scroll the workspace; the minimum size is 1040×740.
