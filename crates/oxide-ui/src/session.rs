@@ -53,6 +53,14 @@ impl Session {
         self.saved.as_ref() != Some(self.editor.project())
     }
 
+    pub fn recover(path: &Path) -> ProjectResult<Self> {
+        let mut session = Self::open(Some(path))?;
+        session.media_base = std::env::current_dir()?;
+        session.path = None;
+        session.saved = None;
+        Ok(session)
+    }
+
     pub fn sample_path(&self, track: usize) -> Option<PathBuf> {
         self.editor.project().tracks[track]
             .sample
@@ -81,18 +89,7 @@ impl Session {
             .ok_or("Expected a project directory")?
             .canonicalize()?;
         let target = parent.join(target.file_name().ok_or("Expected a project file name")?);
-        let mut document = self.editor.project().clone();
-        for track in &mut document.tracks {
-            if let Some(sample) = &track.sample {
-                let absolute = self.media_base.join(sample);
-                track.sample = Some(
-                    absolute
-                        .strip_prefix(&parent)
-                        .unwrap_or(&absolute)
-                        .to_owned(),
-                );
-            }
-        }
+        let document = self.document_for(Some(&parent));
         if self.path.as_ref() == Some(&target) {
             document.save(&target)?;
         } else {
@@ -101,6 +98,22 @@ impl Session {
         self.path = Some(target);
         self.saved = Some(self.editor.project().clone());
         Ok(())
+    }
+
+    pub fn document_for(&self, parent: Option<&Path>) -> Project {
+        let mut document = self.editor.project().clone();
+        for track in &mut document.tracks {
+            if let Some(sample) = &track.sample {
+                let absolute = self.media_base.join(sample);
+                track.sample = Some(
+                    parent
+                        .and_then(|parent| absolute.strip_prefix(parent).ok())
+                        .unwrap_or(&absolute)
+                        .to_owned(),
+                );
+            }
+        }
+        document
     }
 }
 

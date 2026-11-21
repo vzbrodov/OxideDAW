@@ -1,6 +1,7 @@
 //! Native pattern workspace. File I/O, decoding and edits stay on the UI thread.
 mod arranger;
 mod instrument;
+mod recovery;
 mod session;
 mod skin;
 mod theme;
@@ -16,6 +17,7 @@ use oxide_core::{
     sequencer::{ArrangementBar, STEPS, TRACKS},
 };
 use oxide_dsp::sample::AudioSample;
+use recovery::Recovery;
 use session::Session;
 use std::{
     path::{Path, PathBuf},
@@ -37,7 +39,12 @@ pub fn run(path: Option<&Path>) -> ProjectResult<()> {
         options,
         Box::new(move |cc| {
             theme::apply(&cc.egui_ctx);
-            Ok(Box::new(Workspace::new(session, &cc.egui_ctx)?))
+            let mut workspace = Workspace::new(session, &cc.egui_ctx)?;
+            match Recovery::start(&workspace.session) {
+                Ok(recovery) => workspace.recovery = Some(recovery),
+                Err(error) => workspace.notice(format!("Recovery is unavailable: {error}"), true),
+            }
+            Ok(Box::new(workspace))
         }),
     )
     .map_err(|error| error.to_string().into())
@@ -53,6 +60,7 @@ enum FileAction {
 
 struct Workspace {
     session: Session,
+    recovery: Option<Recovery>,
     skin: skin::Skin,
     preview_volume: f32,
     samples: [Option<AudioSample>; TRACKS],
@@ -96,6 +104,7 @@ impl Workspace {
         let velocity = session.editor.project().pattern.get(0, 0).unwrap_or(0);
         let mut app = Self {
             session,
+            recovery: None,
             skin: skin::Skin::new(ctx)?,
             preview_volume: 0.7,
             samples: std::array::from_fn(|_| None),
@@ -376,11 +385,68 @@ impl Workspace {
             Ok(()) => {
                 self.file_action = None;
                 self.notice(format!("Saved {}", path.display()), false);
+                self.clear_recovery();
                 if close_after {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             }
             Err(error) => self.notice(format!("Cannot save: {error}"), true),
+        }
+    }
+
+    fn clear_recovery(&mut self) {
+        if let Some(recovery) = self.recovery.as_mut() {
+            if let Err(error) = recovery.clear(&self.session) {
+                self.notice(format!("Cannot remove recovery snapshot: {error}"), true);
+            }
+        }
+    }
+
+    fn recovery_dialog(&mut self, ctx: &egui::Context) {
+        let Some(recovery) = self.recovery.as_mut() else {
+            return;
+        };
+        let Some((_, session)) = recovery.candidate.as_ref() else {
+            return;
+        };
+        let mut restore = false;
+        let mut skip = false;
+        egui::Modal::new(egui::Id::new("project-recovery")).show(ctx, |ui| {
+            ui.set_width(360.0);
+            ui.heading("Recover unsaved edits?");
+            match session {
+                Ok(session) => {
+                    ui.label(&session.editor.project().name);
+                    ui.label("Recover into a new project file.");
+                }
+                Err(error) => {
+                    ui.label(RichText::new(format!("Cannot read snapshot: {error}")).color(COPPER));
+                }
+            }
+            ui.horizontal(|ui| {
+                skip = ui.button("Later").clicked();
+                restore = ui
+                    .add_enabled(session.is_ok(), egui::Button::new("Recover project"))
+                    .clicked();
+            });
+        });
+        if skip {
+            recovery.candidate = None;
+        } else if let Some((candidate, Ok(session))) =
+            restore.then(|| recovery.candidate.take()).flatten()
+        {
+            match Self::new(session, ctx) {
+                Ok(mut workspace) => {
+                    if let Err(error) = recovery.accept(candidate, &workspace.session) {
+                        workspace.notice(format!("Cannot adopt recovery snapshot: {error}"), true);
+                    }
+                    workspace.recovery = self.recovery.take();
+                    *self = workspace;
+                }
+                Err(error) => {
+                    self.notice(format!("Cannot recover project: {error}"), true);
+                }
+            }
         }
     }
 
@@ -405,7 +471,13 @@ impl Workspace {
     }
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
-        if self.file_action.is_some() || self.confirm_close {
+        if self.file_action.is_some()
+            || self.confirm_close
+            || self
+                .recovery
+                .as_ref()
+                .is_some_and(|recovery| recovery.candidate.is_some())
+        {
             return;
         }
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Q)) {
@@ -465,6 +537,8 @@ impl Workspace {
                             FileAction::Open => match Session::open(Some(&path)).and_then(|session| Self::new(session, ctx).map_err(Into::into)) {
                                 Ok(mut workspace) => {
                                     workspace.wav_export = self.wav_export.take();
+                                    workspace.recovery = self.recovery.take();
+                                    workspace.clear_recovery();
                                     *self = workspace;
                                 }
                                 Err(error) => self.notice(format!("Cannot open project: {error}"), true),
@@ -506,12 +580,19 @@ impl eframe::App for Workspace {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_wav_export();
         if ctx.input(|i| i.viewport().close_requested()) {
+            if let Some(recovery) = self.recovery.as_mut() {
+                recovery.candidate = None;
+            }
             if self.wav_export.is_some() {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 self.notice("Wait for WAV export to finish before closing.", false);
             } else if self.session.dirty() && !self.allow_close {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 self.confirm_close = true;
+            } else if let Some(recovery) = self.recovery.as_ref() {
+                if let Err(error) = recovery.finish() {
+                    eprintln!("Cannot remove recovery snapshot: {error}");
+                }
             }
         }
         if self
@@ -547,7 +628,13 @@ impl eframe::App for Workspace {
             *level = (*level * 0.88).max(peak);
         }
         self.shortcuts(ctx);
-        if let Some(path) = ctx.input(|i| i.raw.dropped_files.first().and_then(|f| f.path.clone()))
+        let recovery_pending = self
+            .recovery
+            .as_ref()
+            .is_some_and(|recovery| recovery.candidate.is_some());
+        if let Some(path) = ctx
+            .input(|i| i.raw.dropped_files.first().and_then(|f| f.path.clone()))
+            .filter(|_| !recovery_pending)
         {
             self.assign(&path);
         }
@@ -574,6 +661,14 @@ impl eframe::App for Workspace {
             self.save(ctx, false);
         }
         self.dialogs(ctx);
+        self.recovery_dialog(ctx);
+        if !ctx.input(|i| i.viewport().close_requested()) {
+            if let Some(recovery) = self.recovery.as_mut() {
+                if let Err(error) = recovery.poll(&self.session, ctx) {
+                    self.notice(format!("Cannot write recovery snapshot: {error}"), true);
+                }
+            }
+        }
         if self.playing || self.preview.is_some() || self.levels.iter().any(|v| *v > 0.001) {
             ctx.request_repaint_after(Duration::from_millis(30));
         }
