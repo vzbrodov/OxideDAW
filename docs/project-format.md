@@ -29,6 +29,19 @@ Paths inside the project directory are stored relative to that directory by
 For a portable session, put the WAVs next to the JSON or in a subdirectory, then
 move that directory as a unit. Manually written relative paths may also use `..`.
 
+`project-pack SOURCE.oxide.json NEW_DIRECTORY` creates `project.oxide.json`
+and copies assigned sample files into `media/`, with filenames based on stable
+track IDs. The packed document uses relative references. Unassigned tracks stay
+unassigned. The command preserves source files and refuses an existing output
+directory. A missing or unreadable sample is reported by track and path.
+Use `set_sample` in `project-edit`, or assign a replacement in the desktop sample
+browser and save before retrying. Packing copies sample bytes. Playback and
+export still perform audio decoding.
+
+The packed document is published after the samples are written and synced.
+If an interruption leaves a directory without `project.oxide.json`, use a new
+destination for the next attempt.
+
 A missing or unassigned sample does not stop `Project::load` or `project-info`.
 Pattern mode requires all four samples. Arrangement playback and export treat
 unassigned tracks as silent. Assigned files must decode successfully, with
@@ -96,7 +109,7 @@ file, which is not loaded as the project automatically.
 and fails if the destination exists, including when another process creates it
 concurrently. The project directory's filesystem must support hard links.
 
-Saving under a different directory retains relative path spellings. A future
-Save As operation must rebase references or copy media explicitly. Media files
-are not covered by the project's atomic save. Directory-sync failures occur
+Calling `Project::save` or `Project::save_new` under a different directory
+retains relative path spellings. Desktop Save As rebases media references.
+Media files are stored separately from the project JSON. Directory-sync failures occur
 after publication and can report an error even though the new document exists.

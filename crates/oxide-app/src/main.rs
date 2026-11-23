@@ -1,6 +1,7 @@
 //! CLI audio prototype. All project I/O and decoding precede audio playback.
 mod controls;
 mod editor;
+mod project_pack;
 use oxide_audio::export::export_project;
 use oxide_audio::playback::{output_devices, Playback};
 use oxide_core::{
@@ -25,6 +26,7 @@ const HELP: &str = "Usage:
   oxide-app project-info <project.oxide.json>
   oxide-app project-play <project.oxide.json> [--arrangement] [device name]
   oxide-app project-export <project.oxide.json> <output.wav>
+  oxide-app project-pack <project.oxide.json> <new-directory>
   oxide-app project-edit <project.oxide.json>
 pattern and project-new use a preset 16-step beat. Default BPM: 120, volume: 0.5.
 play runs once, then outputs silence; patterns loop. Enter stops playback.
@@ -192,6 +194,10 @@ fn run() -> Result<()> {
             println!("Exported {}", destination.display());
         }
         Some("project-edit") if args.len() == 2 => editor::run(Path::new(&args[1]))?,
+        Some("project-pack") if args.len() == 3 => {
+            let destination = project_pack::pack(Path::new(&args[1]), Path::new(&args[2]))?;
+            println!("Packed {}", destination.display());
+        }
         Some("--help") if args.len() == 1 => println!("{HELP}"),
         None => println!("{HELP}"),
         _ => return Err("Invalid arguments. Run with --help".into()),

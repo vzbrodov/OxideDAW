@@ -115,6 +115,16 @@ rate. An empty arrangement loops the main pattern. Unassigned tracks are silent
 in arrangement mode, and missing assigned media is reported before playback.
 See [the project format](docs/project-format.md) for editing and storage details.
 
+To collect a project and copies of its assigned samples in a new folder:
+
+```sh
+cargo run -p oxide-app -- project-pack beat.oxide.json portable-beat
+```
+
+Move the whole folder and open `portable-beat/project.oxide.json`. If a sample
+is missing, reassign it with `project-edit` or the desktop sample browser,
+save the project, and run `project-pack` again.
+
 ### Exporting a beat
 
 The desktop app offers **File → Export WAV** for the current project, including unsaved edits.
