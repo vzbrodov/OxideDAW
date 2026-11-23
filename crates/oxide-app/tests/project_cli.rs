@@ -71,6 +71,84 @@ impl Fixture {
 }
 
 #[test]
+fn packed_project_renders_identically_after_move() {
+    let fixture = Fixture::new();
+    let root = &fixture.0;
+    let relative = root.join("relative");
+    let external = root.join("external");
+    fs::create_dir(&relative).unwrap();
+    fs::create_dir(&external).unwrap();
+    fixture.wave_samples(1, &[4096; 256]);
+    fs::rename(root.join("sample.wav"), relative.join("sample.wav")).unwrap();
+    fixture.wave_samples(1, &[-8192; 512]);
+    let absolute_sample = external.join("sample.wav");
+    fs::rename(root.join("sample.wav"), &absolute_sample).unwrap();
+
+    let mut project = Project {
+        pattern: Pattern::drum_demo(),
+        arrangement: vec![ArrangementBar::Main {}, ArrangementBar::Rest {}],
+        sample_rate: 8000,
+        ..Project::default()
+    };
+    project.tracks[0].sample = Some("relative/sample.wav".into());
+    project.tracks[1].sample = Some(absolute_sample.clone());
+    let source = root.join("beat.oxide.json");
+    project.save_new(&source).unwrap();
+    let original = fs::read(&source).unwrap();
+    assert!(fixture
+        .run(&["project-export", "beat.oxide.json", "before.wav"])
+        .status
+        .success());
+
+    let args = ["project-pack", "beat.oxide.json", "packed"];
+    let result = fixture.run(&args);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(fs::read(&source).unwrap(), original);
+    assert!(!fixture.run(&args).status.success());
+    fs::rename(root.join("packed"), root.join("moved")).unwrap();
+    fs::remove_file(relative.join("sample.wav")).unwrap();
+    fs::remove_file(absolute_sample).unwrap();
+
+    let packed = Project::load(&root.join("moved/project.oxide.json")).unwrap();
+    project.tracks[0].sample = Some("media/track-1.wav".into());
+    project.tracks[1].sample = Some("media/track-2.wav".into());
+    assert_eq!(packed, project);
+    assert!(fixture
+        .run(&["project-export", "moved/project.oxide.json", "after.wav"])
+        .status
+        .success());
+    assert_eq!(
+        fs::read(root.join("before.wav")).unwrap(),
+        fs::read(root.join("after.wav")).unwrap()
+    );
+}
+
+#[test]
+fn pack_reports_missing_media_without_creating_the_destination() {
+    let fixture = Fixture::new();
+    fixture.wave();
+    let mut project = Project::default();
+    project.tracks[0].sample = Some("sample.wav".into());
+    project.tracks[1].sample = Some("missing.wav".into());
+    project
+        .save_new(&fixture.0.join("beat.oxide.json"))
+        .unwrap();
+
+    let result = fixture.run(&["project-pack", "beat.oxide.json", "packed"]);
+    assert_eq!(result.status.code(), Some(1));
+    let message = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        message.contains("Track 2") && message.contains("missing.wav"),
+        "{message}"
+    );
+    assert!(!fixture.0.join("packed").exists());
+}
+
+#[test]
 fn export_resamples_and_drains_the_last_hit_at_fractional_tempo() {
     let fixture = Fixture::new();
     fixture.wave_samples(2, &[8192, -16384].repeat(1550));
