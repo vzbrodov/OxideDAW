@@ -32,6 +32,24 @@ fn mono(p: &egui::Painter, pos: egui::Pos2, value: impl ToString, size: f32, col
         color,
     );
 }
+
+fn paint_waveform(p: &egui::Painter, plot: Rect, peaks: &[f32]) {
+    let p = p.with_clip_rect(plot);
+    for (i, &peak) in peaks.iter().enumerate() {
+        let x = plot.left() + (i as f32 + 0.5) / peaks.len() as f32 * plot.width();
+        let height = peak.min(1.0) * plot.height() * 0.45;
+        p.line_segment(
+            [
+                pos2(x, plot.center().y - height),
+                pos2(x, plot.center().y + height),
+            ],
+            Stroke::new(
+                (plot.width() / peaks.len() as f32).max(1.0),
+                Color32::from_rgb(173, 201, 143),
+            ),
+        );
+    }
+}
 fn screw(p: &egui::Painter, center: egui::Pos2) {
     p.circle_filled(center + vec2(0.0, 1.0), 3.4, SHADOW);
     p.circle_filled(center, 2.8, Color32::from_gray(104));
@@ -712,7 +730,124 @@ impl Workspace {
         ui.add_space(15.0);
     }
 
-    pub(super) fn inspector(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn sampler(&mut self, ui: &mut egui::Ui) {
+        if self.sampler_expanded {
+            self.inspector(ui);
+        } else {
+            self.compact_sampler(ui);
+        }
+    }
+
+    fn compact_sampler(&mut self, ui: &mut egui::Ui) {
+        let r = faceplate(ui, 62.0, true);
+        let path = self.session.sample_path(self.selected);
+        let filename = path
+            .as_deref()
+            .and_then(Path::file_name)
+            .map(|name| name.to_string_lossy())
+            .unwrap_or_else(|| "No sample assigned".into());
+        let title_origin = r.min + vec2(26.0, 20.0);
+        text(
+            ui.painter(),
+            title_origin,
+            Align2::LEFT_CENTER,
+            "SAMPLER",
+            15.0,
+            INK,
+        );
+        text(
+            ui.painter(),
+            title_origin + vec2(0.0, 22.0),
+            Align2::LEFT_CENTER,
+            w::fit_label(ui, &filename, FontId::proportional(12.0), 185.0),
+            12.0,
+            INK,
+        );
+        if let Some(path) = &path {
+            ui.interact(
+                Rect::from_min_size(title_origin + vec2(0.0, 12.0), vec2(185.0, 20.0)),
+                ui.id().with("compact-sample-file"),
+                Sense::hover(),
+            )
+            .on_hover_text(path.display().to_string());
+        }
+        let wave = Rect::from_min_max(
+            r.min + vec2(226.0, 12.0),
+            r.right_bottom() - vec2(274.0, 12.0),
+        );
+        let p = ui.painter();
+        p.rect_filled(wave.expand(2.0), 3, Color32::from_rgb(97, 100, 95));
+        p.rect_filled(wave, 2, Color32::from_rgb(24, 34, 33));
+        let peaks = &self.peaks[self.selected];
+        let missing = self.media_errors[self.selected].is_some();
+        if !peaks.is_empty() {
+            paint_waveform(p, wave.shrink(5.0), peaks);
+        } else if missing {
+            text(
+                p,
+                wave.center(),
+                Align2::CENTER_CENTER,
+                "Unavailable",
+                11.0,
+                COPPER,
+            );
+        } else {
+            p.hline(
+                wave.x_range().shrink(5.0),
+                wave.center().y,
+                Stroke::new(1.0_f32, EDGE),
+            );
+        }
+
+        let actions = Rect::from_min_max(
+            r.right_top() + vec2(-254.0, 17.0),
+            r.right_bottom() - vec2(108.0, 12.0),
+        );
+        let mut actions_ui = ui.new_child(egui::UiBuilder::new().max_rect(actions));
+        actions_ui.horizontal(|ui| {
+            let ready = self.samples[self.selected].is_some();
+            if ui
+                .add_enabled(ready, egui::Button::new("Audition"))
+                .on_hover_text("Preview this sample through the master output")
+                .clicked()
+            {
+                self.audition(self.selected);
+            }
+            let label = if missing {
+                "Relink…"
+            } else if ready {
+                "Replace…"
+            } else {
+                "Load…"
+            };
+            if ui.button(label).clicked() {
+                self.show_file(FileAction::ChooseSample);
+            }
+        });
+        self.sampler_details_toggle(ui, r);
+    }
+
+    fn sampler_details_toggle(&mut self, ui: &mut egui::Ui, panel: Rect) {
+        let action = Rect::from_min_size(panel.right_top() + vec2(-100.0, 17.0), vec2(76.0, 25.0));
+        let mut controls = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(action)
+                .id_salt("sampler-details"),
+        );
+        let label = if self.sampler_expanded {
+            "Hide details"
+        } else {
+            "Details"
+        };
+        if controls
+            .add_sized([76.0, 23.0], egui::Button::new(label))
+            .clicked()
+        {
+            self.sampler_expanded = !self.sampler_expanded;
+        }
+    }
+
+    fn inspector(&mut self, ui: &mut egui::Ui) {
         let r = faceplate(ui, 310.0, true);
         let p = ui.painter();
         text(
@@ -739,14 +874,8 @@ impl Workspace {
             Sense::hover(),
         )
         .on_hover_text(track_name);
+        self.sampler_details_toggle(ui, r);
         let p = ui.painter();
-        p.text(
-            r.right_top() + vec2(-27.0, 29.0),
-            Align2::RIGHT_CENTER,
-            "ONE-SHOT / 8 VOICES",
-            FontId::monospace(11.0),
-            SILK,
-        );
         p.line_segment(
             [r.min + vec2(25.0, 52.0), r.right_top() + vec2(-25.0, 52.0)],
             Stroke::new(1.0_f32, Color32::from_gray(148)),
@@ -770,7 +899,12 @@ impl Workspace {
             p,
             wave.min + vec2(12.0, 16.0),
             Align2::LEFT_CENTER,
-            filename,
+            w::fit_label(
+                ui,
+                &filename,
+                FontId::proportional(12.0),
+                wave.width() - 24.0,
+            ),
             12.0,
             Color32::from_rgb(193, 211, 183),
         );
@@ -794,17 +928,7 @@ impl Workspace {
             .max(1)
             .min(peaks.len());
         if n > 0 {
-            for (i, &peak) in peaks.iter().take(n).enumerate() {
-                let x = plot.left() + i as f32 / n as f32 * plot.width();
-                let h = peak.min(1.0) * plot.height() * 0.45;
-                p.line_segment(
-                    [pos2(x, plot.center().y - h), pos2(x, plot.center().y + h)],
-                    Stroke::new(
-                        (plot.width() / n as f32).max(1.0),
-                        Color32::from_rgb(173, 201, 143),
-                    ),
-                );
-            }
+            paint_waveform(p, plot, &peaks[..n]);
         } else {
             text(
                 p,
@@ -891,17 +1015,42 @@ impl Workspace {
             SILK,
         );
         let controls = Rect::from_min_size(r.min + vec2(26.0, 244.0), vec2(r.width() - 52.0, 53.0));
-        ui.scope_builder(egui::UiBuilder::new().max_rect(controls),|ui|{
-            ui.horizontal(|ui|{
-                if w::button(ui,"▶ Audition",96.0,self.preview.is_some()).on_hover_text("Play this sample through the master output; level applies on next audition").clicked(){self.audition(self.selected);}
-                if w::button(ui,"Unassign",76.0,false).clicked(){self.edit(&[EditCommand::SetSample{track_id:self.session.editor.project().tracks[self.selected].id,sample:None}]);}
-                ui.label(RichText::new("Preview stops pattern playback").size(11.0).color(INK));
-            });
-            ui.horizontal(|ui|{
-                ui.label(RichText::new("Source").color(INK));
-                let field=ui.add(egui::TextEdit::singleline(&mut self.sample_input).desired_width(controls.width()-111.0).hint_text("Path to WAV, FLAC or MP3"));
-                if w::button(ui,"Load",49.0,false).clicked() || field.lost_focus()&&ui.input(|i|i.key_pressed(egui::Key::Enter)){self.assign(&PathBuf::from(&self.sample_input));}
-            });
+        let mut panel_ui = ui.new_child(egui::UiBuilder::new().max_rect(controls));
+        panel_ui.horizontal(|ui| {
+            if w::button(ui, "▶ Audition", 96.0, self.preview.is_some())
+                .on_hover_text(
+                    "Play this sample through the master output; level applies on next audition",
+                )
+                .clicked()
+            {
+                self.audition(self.selected);
+            }
+            if w::button(ui, "Unassign", 76.0, false).clicked() {
+                self.edit(&[EditCommand::SetSample {
+                    track_id: self.session.editor.project().tracks[self.selected].id,
+                    sample: None,
+                }]);
+            }
+            ui.label(
+                RichText::new("Preview stops pattern playback")
+                    .size(11.0)
+                    .color(INK),
+            );
+        });
+        panel_ui.horizontal(|ui| {
+            let label = ui.label(RichText::new("Source").color(INK));
+            let field = ui
+                .add(
+                    egui::TextEdit::singleline(&mut self.sample_input)
+                        .desired_width(controls.width() - 111.0)
+                        .hint_text("Path to WAV, FLAC or MP3"),
+                )
+                .labelled_by(label.id);
+            if w::button(ui, "Load", 49.0, false).clicked()
+                || field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
+            {
+                self.assign(&PathBuf::from(&self.sample_input));
+            }
         });
     }
 }

@@ -57,6 +57,7 @@ enum FileAction {
     Save,
     SaveAndClose,
     ExportWav,
+    ChooseSample,
 }
 
 struct Workspace {
@@ -97,6 +98,7 @@ struct Workspace {
     preview: Option<Playback>,
     preview_until: Option<std::time::Instant>,
     sample_input: String,
+    sampler_expanded: bool,
     wave_zoom: f32,
     browser_visible: bool,
 }
@@ -145,6 +147,7 @@ impl Workspace {
             preview: None,
             preview_until: None,
             sample_input: String::new(),
+            sampler_expanded: false,
             wave_zoom: 1.0,
             browser_visible: true,
         };
@@ -370,10 +373,14 @@ impl Workspace {
         }
     }
 
-    fn assign(&mut self, path: &Path) {
+    fn assign(&mut self, path: &Path) -> bool {
         match AudioSample::load(path) {
             Ok(_) => match self.session.assign(self.selected, path) {
                 Ok(_) => {
+                    // A repaired file can have the same path as the failed load.
+                    if self.media_errors[self.selected].is_some() {
+                        self.loaded_paths[self.selected] = None;
+                    }
                     self.changed();
                     self.notice(
                         format!(
@@ -382,11 +389,13 @@ impl Workspace {
                         ),
                         false,
                     );
+                    return true;
                 }
                 Err(error) => self.notice(error.to_string(), true),
             },
             Err(error) => self.notice(format!("Cannot load {}: {error}", path.display()), true),
         }
+        false
     }
 
     fn save(&mut self, ctx: &egui::Context, close_after: bool) {
@@ -471,6 +480,15 @@ impl Workspace {
 
     fn show_file(&mut self, action: FileAction) {
         self.file_action = Some(action);
+        if matches!(action, FileAction::ChooseSample) {
+            self.file_input = self
+                .session
+                .sample_path(self.selected)
+                .map(|path| path.display().to_string())
+                .unwrap_or_default();
+            self.error = false;
+            return;
+        }
         if matches!(action, FileAction::ExportWav) {
             self.file_input = self.suggested_wav_path().display().to_string();
             self.wav_encoding = WavEncoding::default();
@@ -536,19 +554,21 @@ impl Workspace {
                 FileAction::Save => "Save project",
                 FileAction::SaveAndClose => "Save and close",
                 FileAction::ExportWav => "Export WAV",
+                FileAction::ChooseSample => "Choose sample",
             };
-            egui::Modal::new(egui::Id::new("project-file")).show(ctx, |ui| {
+            let dialog = egui::Modal::new(egui::Id::new("project-file")).show(ctx, |ui| {
                 ui.set_width(480.0);
                 ui.heading(title);
                 if matches!(action, FileAction::Open) && self.session.dirty() {
                     ui.label(RichText::new("Opening another project will discard unsaved edits. Cancel and save first to keep them.").color(COPPER));
                 }
-                ui.label(if matches!(action, FileAction::ExportWav) {
-                    "Output file (.wav)"
-                } else {
-                    "Project file (.oxide.json)"
+                let path_label = ui.label(match action {
+                    FileAction::ExportWav => "Output file (.wav)",
+                    FileAction::ChooseSample => "Audio file (.wav, .flac or .mp3)",
+                    _ => "Project file (.oxide.json)",
                 });
-                ui.add(egui::TextEdit::singleline(&mut self.file_input).desired_width(f32::INFINITY));
+                let path_field = ui.add(egui::TextEdit::singleline(&mut self.file_input).desired_width(f32::INFINITY))
+                    .labelled_by(path_label.id);
                 if matches!(action, FileAction::ExportWav) {
                     ui.add_space(8.0);
                     ui.label("WAV format");
@@ -561,7 +581,10 @@ impl Workspace {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui.button("Cancel").clicked() { self.file_action = None; }
-                    if ui.button(title).clicked() {
+                    let submit_path = matches!(action, FileAction::ChooseSample)
+                        && path_field.lost_focus()
+                        && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                    if ui.button(title).clicked() || submit_path {
                         let path = PathBuf::from(self.file_input.trim());
                         match action {
                             FileAction::Open => match Session::open(Some(&path)).and_then(|session| Self::new(session, ctx).map_err(Into::into)) {
@@ -574,6 +597,11 @@ impl Workspace {
                                 Err(error) => self.notice(format!("Cannot open project: {error}"), true),
                             },
                             FileAction::ExportWav => self.start_wav_export(path, ctx),
+                            FileAction::ChooseSample => {
+                                if self.assign(&path) {
+                                    self.file_action = None;
+                                }
+                            }
                             FileAction::Save | FileAction::SaveAndClose => {
                                 self.save_to(ctx, &path, matches!(action, FileAction::SaveAndClose));
                             }
@@ -582,6 +610,9 @@ impl Workspace {
                 });
                 if self.error { ui.label(RichText::new(&self.status).color(COPPER)); }
             });
+            if matches!(action, FileAction::ChooseSample) && dialog.should_close() {
+                self.file_action = None;
+            }
         }
         if self.confirm_close {
             egui::Modal::new(egui::Id::new("unsaved-close")).show(ctx, |ui| {
@@ -685,8 +716,8 @@ impl eframe::App for Workspace {
                     .show(ui, |ui| {
                         ui.set_min_width(650.0);
                         self.sequence_view(ui);
+                        self.sampler(ui);
                         self.rack(ui);
-                        self.inspector(ui);
                     });
             });
         if self.save_requested {
@@ -720,6 +751,36 @@ fn is_audio(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn choosing_a_repaired_sample_at_the_same_path_reloads_it() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("oxide-relink-{}-{nonce}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("test.oxide.json");
+        let sample = root.join("kick.wav");
+        let mut project = oxide_core::Project::default();
+        project.tracks[0].sample = Some(PathBuf::from("kick.wav"));
+        project.save_new(&path).unwrap();
+        let ctx = egui::Context::default();
+        let mut workspace = Workspace::new(Session::open(Some(&path)).unwrap(), &ctx).unwrap();
+
+        workspace.show_file(FileAction::ChooseSample);
+        assert_eq!(Path::new(&workspace.file_input), sample);
+        assert!(workspace.media_errors[0].is_some());
+        assert!(!workspace.assign(&sample));
+        let wav = b"RIFF\x26\0\0\0WAVEfmt \x10\0\0\0\x01\0\x01\0\x40\x1f\0\0\x80\x3e\0\0\x02\0\x10\0data\x02\0\0\0\0\x20";
+        std::fs::write(&sample, wav).unwrap();
+        assert!(workspace.assign(&sample));
+        assert!(workspace.media_errors[0].is_none());
+        assert_eq!(workspace.peaks[0], [0.25]);
+        assert!(!workspace.session.dirty());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     #[test]
     fn save_and_close_requires_a_successful_write() {

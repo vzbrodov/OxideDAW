@@ -60,9 +60,12 @@ Click or drag a bar to edit; arrow keys make fine changes when it has focus.
 The numeric slider also edits the selected step. Clear channel applies all
 sixteen edits as one undo action. A velocity drag commits once on release.
 
-**Sampler.** The source display shows the actual envelope, duration, channel
-count, sample rate and a time scale. Waveform zoom changes the visible beginning
-of the source. Audition level changes the level used on the next preview;
+**Sampler.** The strip above the rhythm panel shows the selected channel's
+sample and waveform. Use **Audition** to preview it, **Load…** for an unassigned
+channel, or **Relink…** to replace an unavailable file. **Details** opens the
+full sampler with the source path, duration, channel count, sample rate and
+time scale. Waveform zoom changes the visible beginning of the source.
+Audition level changes the level used on the next preview;
 it is a session-only preview setting, multiplied by master output gain.
 Drag either knob vertically or use arrow keys when focused. Preview stops
 pattern playback; Stop ends preview too. Source path, Load, Unassign and

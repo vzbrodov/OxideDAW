@@ -70,6 +70,9 @@ impl Session {
 
     pub fn assign(&mut self, track: usize, path: &Path) -> ProjectResult<bool> {
         let path = std::fs::canonicalize(path)?;
+        if self.sample_path(track).as_deref() == Some(path.as_path()) {
+            return Ok(false);
+        }
         self.editor.apply_batch(&[EditCommand::SetSample {
             track_id: self.editor.project().tracks[track].id,
             sample: Some(path),
