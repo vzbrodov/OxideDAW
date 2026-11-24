@@ -1,6 +1,6 @@
 //! Render a project snapshot outside the UI and audio threads.
 use super::*;
-use oxide_audio::export::export_project;
+use oxide_audio::export::export_project_as;
 use oxide_core::Project;
 use std::sync::mpsc::{self, TryRecvError};
 
@@ -33,12 +33,14 @@ impl Workspace {
         }
         let project = self.session.editor.project().clone();
         let paths = std::array::from_fn(|track| self.session.sample_path(track));
+        let encoding = self.wav_encoding;
         let (sender, receiver) = mpsc::channel();
         let ctx = ctx.clone();
         match std::thread::Builder::new()
             .name("wav-export".into())
             .spawn(move || {
-                let result = write_wav(&project, paths, &destination).map(|()| destination);
+                let result =
+                    write_wav(&project, paths, &destination, encoding).map(|()| destination);
                 let _ = sender.send(result);
                 ctx.request_repaint();
             }) {
@@ -72,6 +74,7 @@ fn write_wav(
     project: &Project,
     paths: [Option<PathBuf>; TRACKS],
     destination: &Path,
+    encoding: WavEncoding,
 ) -> Result<(), String> {
     let mut samples = std::array::from_fn(|_| AudioSample {
         samples: vec![0.0],
@@ -90,7 +93,7 @@ fn write_wav(
             })?;
         }
     }
-    export_project(project, samples, destination)
+    export_project_as(project, samples, destination, encoding)
         .map_err(|error| format!("Cannot export {}: {error}", destination.display()))
 }
 
@@ -98,6 +101,38 @@ fn write_wav(
 mod tests {
     use super::*;
     use oxide_core::sequencer::ArrangementBar;
+
+    #[test]
+    fn background_export_uses_the_selected_format_and_current_edits() {
+        let ctx = egui::Context::default();
+        let mut workspace = Workspace::new(Session::open(None).unwrap(), &ctx).unwrap();
+        workspace
+            .session
+            .editor
+            .apply_batch(&[EditCommand::SetBpm { bpm: 240.0 }])
+            .unwrap();
+        let destination =
+            std::env::temp_dir().join(format!("oxide-float-export-{}.wav", std::process::id()));
+        workspace.show_file(FileAction::ExportWav);
+        assert!(matches!(workspace.wav_encoding, WavEncoding::Pcm16));
+        workspace.wav_encoding = WavEncoding::Float32;
+        workspace.start_wav_export(destination.clone(), &ctx);
+        let exported = workspace
+            .wav_export
+            .take()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        assert_eq!(exported, destination);
+        let bytes = std::fs::read(&destination).unwrap();
+        std::fs::remove_file(&destination).unwrap();
+        assert_eq!(u16::from_le_bytes(bytes[20..22].try_into().unwrap()), 3);
+        let frames = u32::from_le_bytes(bytes[46..50].try_into().unwrap());
+        assert_eq!(frames, workspace.session.editor.project().sample_rate);
+        assert!(workspace.session.dirty());
+        assert!(workspace.file_action.is_none());
+    }
 
     #[test]
     fn missing_assigned_media_is_reported_without_publishing_a_wav() {
@@ -111,7 +146,7 @@ mod tests {
         let missing = root.join("missing.wav");
         let destination = root.join("beat.wav");
         let paths = [Some(missing), None, None, None];
-        let error = write_wav(&project, paths, &destination).unwrap_err();
+        let error = write_wav(&project, paths, &destination, WavEncoding::Pcm24).unwrap_err();
         assert!(error.contains("Track 1") && error.contains("missing.wav"));
         assert!(!destination.exists());
         std::fs::remove_dir(&root).unwrap();

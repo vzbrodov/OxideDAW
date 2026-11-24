@@ -149,7 +149,7 @@
 - [ ] Компенсация задержки на параллельных путях, включая dry/wet, sends
   и sidechain. [Описание PDC у Image-Line](https://www.image-line.com/fl-studio-learning/fl-studio-online-manual/html/mixer_trackprops.htm).
 - [x] Экспорт мастера в WAV PCM 24 бит и IEEE float 32 бит через CLI.
-- [ ] Выбор формата WAV в настольном приложении.
+- [x] Выбор формата WAV в настольном приложении.
 - [ ] Экспорт выделения и стемов, dither,
   bounce/consolidate и отчёт о пиках.
 

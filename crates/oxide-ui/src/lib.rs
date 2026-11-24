@@ -10,6 +10,7 @@ mod wav_export;
 mod widgets;
 
 use eframe::egui::{self, pos2, vec2, Align2, FontId, Rect, RichText, Sense, Stroke, StrokeKind};
+use oxide_audio::export::WavEncoding;
 use oxide_audio::playback::{Playback, PlaybackCommand};
 use oxide_core::{
     edit::EditCommand,
@@ -84,6 +85,7 @@ struct Workspace {
     error: bool,
     file_action: Option<FileAction>,
     file_input: String,
+    wav_encoding: WavEncoding,
     wav_export: Option<wav_export::PendingExport>,
     confirm_close: bool,
     allow_close: bool,
@@ -128,6 +130,7 @@ impl Workspace {
             error: false,
             file_action: None,
             file_input: String::new(),
+            wav_encoding: WavEncoding::default(),
             wav_export: None,
             confirm_close: false,
             allow_close: false,
@@ -454,6 +457,7 @@ impl Workspace {
         self.file_action = Some(action);
         if matches!(action, FileAction::ExportWav) {
             self.file_input = self.suggested_wav_path().display().to_string();
+            self.wav_encoding = WavEncoding::default();
             return;
         }
         self.file_input = self
@@ -528,6 +532,15 @@ impl Workspace {
                     "Project file (.oxide.json)"
                 });
                 ui.add(egui::TextEdit::singleline(&mut self.file_input).desired_width(f32::INFINITY));
+                if matches!(action, FileAction::ExportWav) {
+                    ui.add_space(8.0);
+                    ui.label("WAV format");
+                    ui.horizontal_wrapped(|ui| {
+                        ui.radio_value(&mut self.wav_encoding, WavEncoding::Pcm16, "16-bit PCM");
+                        ui.radio_value(&mut self.wav_encoding, WavEncoding::Pcm24, "24-bit PCM");
+                        ui.radio_value(&mut self.wav_encoding, WavEncoding::Float32, "32-bit float");
+                    });
+                }
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui.button("Cancel").clicked() { self.file_action = None; }

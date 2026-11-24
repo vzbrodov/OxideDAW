@@ -14,7 +14,7 @@ use std::{
 const BLOCK_FRAMES: usize = 1024;
 const TOO_LONG: &str = "Rendered audio exceeds the RIFF WAV size limit";
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum WavEncoding {
     #[default]
     Pcm16,

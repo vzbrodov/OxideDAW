@@ -127,7 +127,8 @@ save the project, and run `project-pack` again.
 
 ### Exporting a beat
 
-The desktop app offers **File → Export WAV** for the current project, including unsaved edits.
+Use **File → Export WAV** to export the current desktop project, including
+unsaved edits, as 16-bit PCM, 24-bit PCM, or 32-bit float.
 
 ```sh
 cargo run -p oxide-app -- project-export beat.oxide.json beat.wav
