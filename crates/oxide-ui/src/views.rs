@@ -307,15 +307,25 @@ impl Workspace {
                             ui.add_space(12.0);
                             ui.vertical(|ui| {
                                 ui.label(RichText::new("4/4     1/16").monospace().color(TEXT));
-                                let source = if self.arrangement_mode {
+                                let source = if self.arrangement_mode
+                                    && !self.session.editor.project().arrangement.is_empty()
+                                {
                                     format!(
                                         "Arrangement  •  {bars} bar{}",
                                         if bars == 1 { "" } else { "s" }
                                     )
                                 } else {
-                                    "Pattern  •  1 bar".into()
+                                    let name = if self.arrangement_mode {
+                                        "Main pattern"
+                                    } else {
+                                        self.rack_pattern_name()
+                                    };
+                                    format!("Pattern  •  {name}")
                                 };
-                                ui.label(RichText::new(source).size(10.0).color(MUTED));
+                                let fitted =
+                                    w::fit_label(ui, &source, FontId::proportional(10.0), 140.0);
+                                ui.label(RichText::new(fitted).size(10.0).color(MUTED))
+                                    .on_hover_text(source);
                             });
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),

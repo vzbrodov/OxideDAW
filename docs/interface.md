@@ -44,11 +44,12 @@ Both are bundled under SIL OFL 1.1, with attribution in
 
 **Transport.** Open/save, undo/redo, rewind, stop, play/pause, tempo,
 bar/beat/tick position and stereo output meters. File and Edit menus provide
-project actions; Library toggles the browser.
+project actions; Library toggles the browser. Below the time signature, the
+transport shows the pattern or arrangement selected for playback.
 
 **Rhythm panel.** Four channels and sixteen steps, grouped into four beats.
-Use the selector in the panel header to choose the main pattern or a named
-pattern. **New pattern…** creates and selects a blank one-bar pattern.
+Use the searchable selector in the panel header to choose the main pattern
+or a named pattern. **New pattern…** creates and selects a blank one-bar pattern.
 Click a pad to toggle velocity 0/100; right-click to select without changing it.
 The **Pattern** tab loops the selected pattern. Switching patterns in this tab
 stops playback. The ruler above the pads seeks within the current bar.
@@ -107,8 +108,9 @@ Smaller windows scroll the workspace; the minimum size is 1040×740.
 ## Arrangement
 
 Use the **Arrangement** tab above the step sequencer to edit and loop the
-saved bar order. **+ Pattern** inserts a bar that follows edits to the selected
-pattern. **+ Variation** captures the current pattern as an independent bar.
+saved bar order. The add button shows the selected pattern's name, for example
+**+ Verse**. It inserts a bar that follows edits to that pattern.
+**+ Variation** captures the current pattern as an independent bar.
 **+ Rest** adds a bar with no new hits.
 
 Select a bar to move, replace or remove it. Double-click a bar to seek while

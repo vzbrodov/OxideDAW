@@ -30,10 +30,7 @@ impl Workspace {
 
     fn arranger(&mut self, ui: &mut egui::Ui) {
         let rack_pattern = self.rack_pattern().clone();
-        let selected_pattern_name = self
-            .named_pattern()
-            .map_or("Main pattern", |pattern| &pattern.name)
-            .to_owned();
+        let selected_pattern_name = self.rack_pattern_name().to_owned();
         let project = self.session.editor.project();
         let selected_pattern_bar = self
             .selected_pattern
@@ -69,8 +66,11 @@ impl Workspace {
                             .color(MUTED),
                     );
                     ui.separator();
+                    let add = format!("+ {}", super::widgets::fit_label(
+                        ui, &selected_pattern_name, FontId::proportional(13.0), 140.0
+                    ));
                     if ui
-                        .button("+ Pattern")
+                        .button(add)
                         .on_hover_text(format!("Add {selected_pattern_name}"))
                         .clicked()
                     {
@@ -123,9 +123,11 @@ impl Workspace {
                             }
                         };
                         let label_width = (width - 2.0 * ui.spacing().button_padding.x).max(0.0);
+                        let font = FontId::monospace(11.0);
+                        let fitted = super::widgets::fit_label(ui, name, font.clone(), label_width);
                         let mut label = egui::text::LayoutJob::simple(
-                            format!("{}\n{}", index + 1, name.lines().next().unwrap_or(name)),
-                            FontId::monospace(11.0),
+                            format!("{}\n{fitted}", index + 1),
+                            font,
                             color,
                             label_width,
                         );

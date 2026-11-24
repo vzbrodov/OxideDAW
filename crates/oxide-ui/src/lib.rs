@@ -75,6 +75,7 @@ struct Workspace {
     playback_bars: Vec<PlaybackBar>,
     selected_pattern: Option<u64>,
     new_pattern: Option<instrument::NewPattern>,
+    pattern_search: String,
     selected: usize,
     selected_step: usize,
     bpm: f64,
@@ -122,6 +123,7 @@ impl Workspace {
             playback_bars: Vec::new(),
             selected_pattern: None,
             new_pattern: None,
+            pattern_search: String::new(),
             selected: 0,
             selected_step: 0,
             bpm,
@@ -653,8 +655,10 @@ impl eframe::App for Workspace {
                 *value = value.max(peak);
             }
         }
+        let elapsed = ctx.input(|input| input.unstable_dt);
+        let decay = 0.88_f32.powf(elapsed / 0.030);
         for (level, peak) in self.levels.iter_mut().zip(peaks) {
-            *level = (*level * 0.88).max(peak);
+            *level = (*level * decay).max(peak);
         }
         self.shortcuts(ctx);
         let recovery_pending = self

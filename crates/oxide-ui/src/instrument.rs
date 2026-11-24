@@ -181,6 +181,11 @@ impl Workspace {
             })
     }
 
+    pub(super) fn rack_pattern_name(&self) -> &str {
+        self.named_pattern()
+            .map_or("Main pattern", |pattern| &pattern.name)
+    }
+
     pub(super) fn transport_pattern(&self) -> &Pattern {
         if self.arrangement_mode {
             &self.session.editor.project().pattern
@@ -244,26 +249,61 @@ impl Workspace {
     fn pattern_controls(&mut self, ui: &mut egui::Ui) {
         let mut selected = self.selected_pattern;
         ui.horizontal(|ui| {
-            egui::ComboBox::from_id_salt("rack-pattern")
-                .selected_text(
-                    self.named_pattern()
-                        .map_or("Main pattern", |pattern| &pattern.name),
-                )
+            let response = egui::ComboBox::from_id_salt("rack-pattern")
+                .selected_text(w::fit_label(
+                    ui,
+                    self.rack_pattern_name(),
+                    FontId::proportional(13.0),
+                    125.0,
+                ))
                 .width(156.0)
                 .truncate()
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                 .show_ui(ui, |ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.pattern_search)
+                            .hint_text("Search patterns")
+                            .desired_width(216.0),
+                    );
+                    let query = self.pattern_search.trim().to_lowercase();
                     egui::ScrollArea::vertical()
                         .max_height(240.0)
                         .show(ui, |ui| {
-                            ui.selectable_value(&mut selected, None, "Main pattern");
-                            for pattern in &self.session.editor.project().patterns {
-                                ui.selectable_value(&mut selected, Some(pattern.id), &pattern.name)
-                                    .on_hover_text(format!("Pattern ID {}", pattern.id));
+                            let patterns = self
+                                .session
+                                .editor
+                                .project()
+                                .patterns
+                                .iter()
+                                .map(|pattern| (Some(pattern.id), pattern.name.as_str()));
+                            let mut found = false;
+                            for (id, name) in
+                                std::iter::once((None, "Main pattern")).chain(patterns)
+                            {
+                                if !query.is_empty() && !name.to_lowercase().contains(&query) {
+                                    continue;
+                                }
+                                found = true;
+                                let label =
+                                    w::fit_label(ui, name, FontId::proportional(13.0), 204.0);
+                                if ui
+                                    .selectable_label(selected == id, label)
+                                    .on_hover_text(name)
+                                    .clicked()
+                                {
+                                    selected = id;
+                                    ui.close();
+                                }
+                            }
+                            if !found {
+                                ui.label(RichText::new("No matching patterns").color(MUTED));
                             }
                         });
-                })
-                .response
-                .on_hover_text("Pattern to edit");
+                });
+            if response.inner.is_none() {
+                self.pattern_search.clear();
+            }
+            response.response.on_hover_text(self.rack_pattern_name());
             let can_create = self.session.editor.project().patterns.len() < MAX_NAMED_PATTERNS;
             if ui
                 .add_enabled(can_create, egui::Button::new("New pattern…"))
@@ -412,11 +452,19 @@ impl Workspace {
                 11.0,
                 color,
             );
+            let track_name = &self.session.editor.project().tracks[track].name;
+            let display_name = w::fit_label(
+                ui,
+                track_name,
+                FontId::proportional(13.0),
+                name.width() - 44.0,
+            );
+            let tooltip = format!("{track_name}\nDouble-click to audition");
             text(
                 ui.painter(),
                 name.min + vec2(36.0, 13.0),
                 Align2::LEFT_CENTER,
-                &self.session.editor.project().tracks[track].name,
+                display_name,
                 13.0,
                 TEXT,
             );
@@ -441,7 +489,7 @@ impl Workspace {
             if response.double_clicked() {
                 self.audition(track);
             }
-            response.on_hover_text("Select channel · double-click to audition");
+            response.on_hover_text(tooltip);
             for step in 0..STEPS {
                 let pad = Rect::from_min_size(
                     pos2(left + step as f32 * cell, y + 1.0),
@@ -533,18 +581,33 @@ impl Workspace {
             11.0,
             MUTED,
         );
+        let name = &self.session.editor.project().tracks[self.selected].name;
+        let step = format!(" / {:02}", self.selected_step + 1);
+        let label_pos = pos2(r.left() + 27.0, y + 28.0);
+        let font = FontId::proportional(12.0);
+        let width = left - 36.0 - label_pos.x;
+        let step_width = ui.fonts_mut(|fonts| {
+            fonts
+                .layout_no_wrap(step.clone(), font.clone(), TEXT)
+                .size()
+                .x
+        });
+        let label = format!("{}{step}", w::fit_label(ui, name, font, width - step_width));
+        let tooltip = format!("{name}{step}");
         text(
             ui.painter(),
-            pos2(r.left() + 27.0, y + 28.0),
+            label_pos,
             Align2::LEFT_CENTER,
-            format!(
-                "{} / {:02}",
-                self.session.editor.project().tracks[self.selected].name,
-                self.selected_step + 1
-            ),
+            label,
             12.0,
             TRACK[self.selected],
         );
+        ui.interact(
+            Rect::from_min_size(label_pos - vec2(0.0, 8.0), vec2(width, 16.0)),
+            ui.id().with("velocity-channel-name"),
+            Sense::hover(),
+        )
+        .on_hover_text(tooltip);
         for (offset, value) in [(0.0, "127"), (22.0, "64"), (44.0, "0")] {
             mono(
                 ui.painter(),
@@ -660,14 +723,23 @@ impl Workspace {
             19.0,
             INK,
         );
+        let track_name = &self.session.editor.project().tracks[self.selected].name;
+        let name_width = r.width() - 300.0;
         text(
-            p,
+            ui.painter(),
             r.min + vec2(142.0, 29.0),
             Align2::LEFT_CENTER,
-            &self.session.editor.project().tracks[self.selected].name,
+            w::fit_label(ui, track_name, FontId::proportional(14.0), name_width),
             14.0,
             INK,
         );
+        ui.interact(
+            Rect::from_min_size(r.min + vec2(142.0, 20.0), vec2(name_width, 18.0)),
+            ui.id().with("sampler-channel-name"),
+            Sense::hover(),
+        )
+        .on_hover_text(track_name);
+        let p = ui.painter();
         p.text(
             r.right_top() + vec2(-27.0, 29.0),
             Align2::RIGHT_CENTER,

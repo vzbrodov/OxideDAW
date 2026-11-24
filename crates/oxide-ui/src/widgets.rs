@@ -4,6 +4,47 @@ use eframe::egui::{
     Color32, Painter, Response, Shape,
 };
 
+pub(super) fn fit_label(ui: &egui::Ui, value: &str, font: FontId, width: f32) -> String {
+    let value = value.lines().next().unwrap_or_default();
+    ui.fonts_mut(|fonts| {
+        let fits = |fonts: &mut egui::epaint::text::FontsView<'_>, text: &str| {
+            fonts
+                .layout_no_wrap(text.to_owned(), font.clone(), TEXT)
+                .size()
+                .x
+                <= width
+        };
+        if fits(fonts, value) {
+            return value.to_owned();
+        }
+        let chars: Vec<_> = value
+            .char_indices()
+            .map(|(index, _)| index)
+            .chain([value.len()])
+            .collect();
+        let mut best = String::from("…");
+        let mut low = 1;
+        let mut high = chars.len().saturating_sub(2);
+        while low <= high {
+            let count = low + (high - low) / 2;
+            let prefix = count / 3;
+            let suffix = count - prefix;
+            let candidate = format!(
+                "{}…{}",
+                &value[..chars[prefix]],
+                &value[chars[chars.len() - 1 - suffix]..]
+            );
+            if fits(fonts, &candidate) {
+                best = candidate;
+                low = count + 1;
+            } else {
+                high = count - 1;
+            }
+        }
+        best
+    })
+}
+
 pub(super) fn gradient(p: &Painter, rect: Rect, top: Color32, bottom: Color32) {
     let mut mesh = Mesh::default();
     for (pos, color) in [
@@ -251,5 +292,30 @@ pub(super) fn meter(p: &Painter, rect: Rect, peak: f32, horizontal: bool) {
             )
         };
         p.rect_filled(segment, 0, color);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fitted_pattern_names_keep_the_distinguishing_suffix() {
+        let ctx = egui::Context::default();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let font = FontId::monospace(11.0);
+                for suffix in ["Verse", "Chorus", "Куплет"] {
+                    let name = format!("Breakbeat drum variations and ghost notes — {suffix}");
+                    let fitted = fit_label(ui, &name, font.clone(), 76.0);
+                    assert!(fitted.contains('…') && fitted.ends_with(suffix));
+                    let width = ui.fonts_mut(|fonts| {
+                        fonts.layout_no_wrap(fitted, font.clone(), TEXT).size().x
+                    });
+                    assert!(width <= 76.0);
+                }
+                assert_eq!(fit_label(ui, "Intro", font, 76.0), "Intro");
+            });
+        });
     }
 }
