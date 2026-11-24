@@ -1,5 +1,5 @@
 //! Four-track offline/realtime renderer with bounded polyphony and no render-time allocation.
-use oxide_core::sequencer::{ArrangementBar, Pattern, Transport, TRACKS};
+use oxide_core::sequencer::{Pattern, PlaybackBar, Transport, TRACKS};
 use oxide_dsp::{sample::AudioSample, SamplerVoice};
 
 pub const VOICES_PER_TRACK: usize = 8;
@@ -105,7 +105,7 @@ impl PatternRenderer {
     pub(crate) fn seek_sequence_step(
         &mut self,
         step: usize,
-        arrangement: &[ArrangementBar],
+        arrangement: &[PlaybackBar],
     ) -> Result<(), &'static str> {
         self.transport.seek_sequence_step(step, arrangement)?;
         self.clear_voices();
@@ -120,7 +120,7 @@ impl PatternRenderer {
         self.transport.position_steps()
     }
 
-    pub(crate) fn sequence_end_frame(&self, arrangement: &[ArrangementBar]) -> u64 {
+    pub(crate) fn sequence_end_frame(&self, arrangement: &[PlaybackBar]) -> u64 {
         self.transport.sequence_end_frame(arrangement)
     }
 
@@ -146,11 +146,7 @@ impl PatternRenderer {
         self.render_sequence(output, &[]);
     }
 
-    pub(crate) fn render_sequence(
-        &mut self,
-        output: &mut [[f32; 2]],
-        arrangement: &[ArrangementBar],
-    ) {
+    pub(crate) fn render_sequence(&mut self, output: &mut [[f32; 2]], arrangement: &[PlaybackBar]) {
         output.fill([0.0; 2]);
         self.peaks.fill(0.0);
         let draining = !self.transport.is_playing() && self.transport.position() != 0;

@@ -351,6 +351,11 @@ fn legacy_project_can_save_undo_and_export_an_arrangement() {
     let stored: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     assert_eq!(stored["format_version"], FORMAT_VERSION);
 
+    let mut v2 = stored;
+    v2["format_version"] = 2.into();
+    fs::write(&path, v2.to_string()).unwrap();
+    assert_eq!(Project::load(&path).unwrap(), saved);
+
     let result = fixture.run(&["project-export", "beat.oxide.json", "song.wav"]);
     assert!(
         result.status.success(),
@@ -377,6 +382,69 @@ fn legacy_project_can_save_undo_and_export_an_arrangement() {
         assert_eq!(*frame, [expected; 2], "at frame {index}");
     }
 }
+
+#[test]
+fn named_pattern_edits_update_every_linked_bar_after_reopening() {
+    let fixture = Fixture::new();
+    fixture.wave_samples(1, &[8192]);
+    let path = fixture.0.join("beat.oxide.json");
+    let mut project = Project {
+        bpm: 120.0,
+        sample_rate: 8000,
+        master_volume: 1.0,
+        ..Project::default()
+    };
+    project.tracks[0].sample = Some("sample.wav".into());
+    project.save_new(&path).unwrap();
+    let result = fixture.edit(concat!(
+        r#"[{"command":"add_pattern","pattern_id":42,"name":"Verse"},"#,
+        r#"{"command":"set_arrangement","bars":[{"type":"pattern","pattern_id":42},{"type":"rest"},{"type":"pattern","pattern_id":42}]}]"#,
+        "\nundo\nredo\nsave\nquit\n",
+    ));
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    let initial = Project::load(&path).unwrap();
+    let result = fixture.edit(concat!(
+        r#"[{"command":"rename_pattern","pattern_id":42,"name":"Discarded"},"#,
+        r#"{"command":"remove_pattern","pattern_id":42}]"#,
+        "\nsave\nquit\n",
+    ));
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("unknown pattern ID"));
+    assert_eq!(Project::load(&path).unwrap(), initial);
+
+    let result = fixture.edit(concat!(
+        r#"{"command":"set_pattern_step","pattern_id":42,"track_id":1,"step":0,"velocity":127}"#,
+        "\nsave\nquit\n",
+    ));
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let result = fixture.run(&["project-export", "beat.oxide.json", "song.wav"]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let audio = oxide_dsp::sample::AudioSample::load(&fixture.0.join("song.wav")).unwrap();
+    assert_eq!(audio.samples.len(), 48000 * 2);
+    let left_hits: Vec<_> = audio
+        .samples
+        .iter()
+        .step_by(2)
+        .enumerate()
+        .filter(|&(_, &sample)| sample != 0.0)
+        .map(|(frame, &sample)| (frame, sample))
+        .collect();
+    assert_eq!(left_hits, [(0, 0.25), (32000, 0.25)]);
+}
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);

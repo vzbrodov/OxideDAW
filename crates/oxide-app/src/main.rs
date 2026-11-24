@@ -148,6 +148,9 @@ fn run() -> Result<()> {
             if !project.arrangement.is_empty() {
                 println!("Arrangement: {} bars", project.arrangement.len());
             }
+            for pattern in &project.patterns {
+                println!("Pattern {}: {}", pattern.id, pattern.name);
+            }
         }
         Some("project-play") if (2..=4).contains(&args.len()) => {
             let path = Path::new(&args[1]);
@@ -165,7 +168,7 @@ fn run() -> Result<()> {
             let project = Project::load(path)?;
             let samples = load_project_samples(&project, path, arrangement_mode)?;
             let arrangement = if arrangement_mode {
-                project.arrangement
+                project.playback_bars()?
             } else {
                 Vec::new()
             };

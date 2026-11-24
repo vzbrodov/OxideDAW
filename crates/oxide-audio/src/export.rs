@@ -1,7 +1,7 @@
 //! Offline export through the same sequencer and mixer as live playback.
 use crate::pattern::PatternRenderer;
 use oxide_core::{
-    sequencer::{ArrangementBar, TRACKS},
+    sequencer::{PlaybackBar, TRACKS},
     storage::write_file,
     Project,
 };
@@ -70,19 +70,16 @@ pub fn export_project_as(
     destination: &Path,
     encoding: WavEncoding,
 ) -> io::Result<()> {
-    export(
-        project,
-        samples,
-        &project.arrangement,
-        destination,
-        encoding,
-    )
+    let bars = project
+        .playback_bars()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;
+    export(project, samples, &bars, destination, encoding)
 }
 
 fn export(
     project: &Project,
     samples: [AudioSample; TRACKS],
-    arrangement: &[ArrangementBar],
+    arrangement: &[PlaybackBar],
     destination: &Path,
     encoding: WavEncoding,
 ) -> io::Result<()> {

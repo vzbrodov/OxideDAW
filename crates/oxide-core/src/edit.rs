@@ -1,5 +1,9 @@
 //! Shared control-thread editing API. One successful batch is one undo action.
-use crate::{project::ProjectResult, sequencer::ArrangementBar, Project};
+use crate::{
+    project::{NamedPattern, ProjectResult},
+    sequencer::{ArrangementBar, Pattern},
+    Project,
+};
 use serde::{Deserialize, Serialize};
 use std::{collections::VecDeque, path::PathBuf};
 
@@ -25,6 +29,25 @@ pub enum EditCommand {
     },
     SetArrangement {
         bars: Vec<ArrangementBar>,
+    },
+    AddPattern {
+        pattern_id: u64,
+        name: String,
+        #[serde(default)]
+        pattern: Pattern,
+    },
+    SetPatternStep {
+        pattern_id: u64,
+        track_id: u64,
+        step: usize,
+        velocity: u8,
+    },
+    RenamePattern {
+        pattern_id: u64,
+        name: String,
+    },
+    RemovePattern {
+        pattern_id: u64,
     },
 }
 
@@ -74,6 +97,37 @@ impl ProjectEditor {
                     candidate.tracks[track].sample = sample.clone();
                 }
                 EditCommand::SetArrangement { bars } => candidate.arrangement.clone_from(bars),
+                EditCommand::AddPattern {
+                    pattern_id,
+                    name,
+                    pattern,
+                } => {
+                    candidate.patterns.push(NamedPattern {
+                        id: *pattern_id,
+                        name: name.clone(),
+                        pattern: pattern.clone(),
+                    });
+                }
+                EditCommand::SetPatternStep {
+                    pattern_id,
+                    track_id,
+                    step,
+                    velocity,
+                } => {
+                    let track = track_index(&candidate, *track_id)?;
+                    let index = pattern_index(&candidate, *pattern_id)?;
+                    candidate.patterns[index]
+                        .pattern
+                        .set(track, *step, *velocity)?;
+                }
+                EditCommand::RenamePattern { pattern_id, name } => {
+                    let index = pattern_index(&candidate, *pattern_id)?;
+                    candidate.patterns[index].name.clone_from(name);
+                }
+                EditCommand::RemovePattern { pattern_id } => {
+                    let index = pattern_index(&candidate, *pattern_id)?;
+                    candidate.patterns.remove(index);
+                }
             }
             candidate.validate()?;
         }
@@ -114,6 +168,14 @@ fn track_index(project: &Project, id: u64) -> ProjectResult<usize> {
         .iter()
         .position(|track| track.id == id)
         .ok_or_else(|| format!("Unknown track ID: {id}").into())
+}
+
+fn pattern_index(project: &Project, id: u64) -> ProjectResult<usize> {
+    project
+        .patterns
+        .iter()
+        .position(|pattern| pattern.id == id)
+        .ok_or_else(|| format!("Unknown pattern ID: {id}").into())
 }
 
 #[cfg(test)]

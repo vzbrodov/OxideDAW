@@ -1,15 +1,17 @@
 //! Versioned project documents. File I/O and validation belong on the control thread.
-use crate::sequencer::{ArrangementBar, Pattern, Transport, TRACKS};
+use crate::sequencer::{ArrangementBar, Pattern, PlaybackBar, Transport, TRACKS};
 use crate::storage::{parent_directory, write_file};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::{HashMap, HashSet},
     error::Error,
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
 };
 
-pub const FORMAT_VERSION: u32 = 2;
+pub const FORMAT_VERSION: u32 = 3;
+const MAX_NAMED_PATTERNS: usize = 256;
 const MAX_PROJECT_BYTES: usize = 16 * 1024 * 1024;
 const PROJECT_TOO_LARGE: &str = "Project JSON exceeds the 16 MiB size limit";
 pub type ProjectResult<T> = Result<T, Box<dyn Error>>;
@@ -25,6 +27,14 @@ pub struct Track {
     pub sample: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NamedPattern {
+    pub id: u64,
+    pub name: String,
+    pub pattern: Pattern,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Project {
@@ -37,6 +47,8 @@ pub struct Project {
     /// Track slots correspond to rows in the pattern grid.
     pub tracks: [Track; TRACKS],
     pub pattern: Pattern,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub patterns: Vec<NamedPattern>,
     /// Empty uses the main pattern by itself.
     #[serde(default)]
     pub arrangement: Vec<ArrangementBar>,
@@ -56,6 +68,7 @@ impl Default for Project {
                 sample: None,
             }),
             pattern: Pattern::default(),
+            patterns: Vec::new(),
             arrangement: Vec::new(),
         }
     }
@@ -90,7 +103,51 @@ impl Project {
                 }
             }
         }
+        if self.patterns.len() > MAX_NAMED_PATTERNS {
+            return Err("Project may contain at most 256 named patterns");
+        }
+        let mut ids = HashSet::with_capacity(self.patterns.len());
+        for pattern in &self.patterns {
+            if pattern.id == 0 || !ids.insert(pattern.id) {
+                return Err("Pattern IDs must be nonzero and unique");
+            }
+            if pattern.name.trim().is_empty() || pattern.name.len() > 128 {
+                return Err("Pattern names must be nonempty and at most 128 UTF-8 bytes");
+            }
+        }
+        for bar in &self.arrangement {
+            if let ArrangementBar::Pattern { pattern_id } = bar {
+                if !ids.contains(pattern_id) {
+                    return Err("Arrangement references an unknown pattern ID");
+                }
+            }
+        }
         Ok(())
+    }
+
+    /// Prepare self-contained bars for the shared live and offline renderer.
+    pub fn playback_bars(&self) -> ProjectResult<Vec<PlaybackBar>> {
+        let patterns: HashMap<_, _> = self.patterns.iter().map(|p| (p.id, &p.pattern)).collect();
+        self.arrangement
+            .iter()
+            .map(|bar| {
+                Ok(match bar {
+                    ArrangementBar::Main {} => PlaybackBar::Main {},
+                    ArrangementBar::Rest {} => PlaybackBar::Rest {},
+                    ArrangementBar::Variation { pattern } => PlaybackBar::Variation {
+                        pattern: pattern.clone(),
+                    },
+                    ArrangementBar::Pattern { pattern_id } => {
+                        let pattern = patterns.get(pattern_id).ok_or_else(|| {
+                            format!("Arrangement references unknown pattern ID {pattern_id}")
+                        })?;
+                        PlaybackBar::Variation {
+                            pattern: (*pattern).clone(),
+                        }
+                    }
+                })
+            })
+            .collect()
     }
 
     pub fn from_json(json: &str) -> ProjectResult<Self> {
@@ -98,7 +155,16 @@ impl Project {
             return Err(PROJECT_TOO_LARGE.into());
         }
         let mut project: Self = serde_json::from_str(json)?;
-        if project.format_version == 1 && project.arrangement.is_empty() {
+        if matches!(project.format_version, 1 | 2) {
+            if (project.format_version == 1 && !project.arrangement.is_empty())
+                || !project.patterns.is_empty()
+                || project
+                    .arrangement
+                    .iter()
+                    .any(|bar| matches!(bar, ArrangementBar::Pattern { .. }))
+            {
+                return Err("Project contains features unavailable in its format version".into());
+            }
             project.format_version = FORMAT_VERSION;
         }
         project.validate()?;
@@ -276,7 +342,7 @@ mod tests {
     fn rejects_bad_version_tempo_ids_velocity_grid_and_unknown_fields() {
         let base = serde_json::to_value(Project::default()).unwrap();
         for (key, value) in [
-            ("format_version", serde_json::json!(3)),
+            ("format_version", serde_json::json!(FORMAT_VERSION + 1)),
             ("bpm", serde_json::json!(0)),
             ("master_volume", serde_json::json!(1.1)),
             ("sample_rate", serde_json::json!(0)),

@@ -18,6 +18,15 @@ pub enum ArrangementBar {
     // Empty struct variants let Serde reject extra fields.
     Main {},
     Variation { pattern: Pattern },
+    Pattern { pattern_id: u64 },
+    Rest {},
+}
+
+/// A bar with its pattern references resolved on the control thread.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PlaybackBar {
+    Main {},
+    Variation { pattern: Pattern },
     Rest {},
 }
 
@@ -162,7 +171,7 @@ impl Transport {
     pub fn seek_sequence_step(
         &mut self,
         step: usize,
-        bars: &[ArrangementBar],
+        bars: &[PlaybackBar],
     ) -> Result<(), &'static str> {
         if step >= sequence_step_count(bars) {
             return Err("Step is outside the sequence");
@@ -193,7 +202,7 @@ impl Transport {
     }
 
     /// Scheduled end of a sequence. An empty arrangement plays one bar.
-    pub fn sequence_end_frame(&self, bars: &[ArrangementBar]) -> u64 {
+    pub fn sequence_end_frame(&self, bars: &[PlaybackBar]) -> u64 {
         self.step_frame(sequence_step_count(bars) as u64)
     }
 
@@ -209,7 +218,7 @@ impl Transport {
         &mut self,
         frames: usize,
         main: &Pattern,
-        bars: &[ArrangementBar],
+        bars: &[PlaybackBar],
         mut emit: impl FnMut(Trigger),
     ) {
         if !self.playing || frames == 0 {
@@ -225,9 +234,9 @@ impl Transport {
             let sequence_step = self.next_step % total_steps;
             self.next_step += 1;
             let pattern = match bars.get((sequence_step / STEPS as u64) as usize) {
-                Some(ArrangementBar::Rest {}) => continue,
-                Some(ArrangementBar::Variation { pattern }) => pattern,
-                Some(ArrangementBar::Main {}) | None => main,
+                Some(PlaybackBar::Rest {}) => continue,
+                Some(PlaybackBar::Variation { pattern }) => pattern,
+                Some(PlaybackBar::Main {}) | None => main,
             };
             let step = (sequence_step % STEPS as u64) as usize;
             for (track, steps) in pattern.steps.iter().enumerate() {
@@ -254,7 +263,7 @@ impl Transport {
 }
 
 /// An empty arrangement uses the main pattern for one bar.
-pub fn sequence_step_count(bars: &[ArrangementBar]) -> usize {
+pub fn sequence_step_count(bars: &[PlaybackBar]) -> usize {
     bars.len().max(1) * STEPS
 }
 

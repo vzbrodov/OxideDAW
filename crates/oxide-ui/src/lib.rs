@@ -15,7 +15,7 @@ use oxide_audio::playback::{Playback, PlaybackCommand};
 use oxide_core::{
     edit::EditCommand,
     project::ProjectResult,
-    sequencer::{ArrangementBar, STEPS, TRACKS},
+    sequencer::{ArrangementBar, PlaybackBar, STEPS, TRACKS},
 };
 use oxide_dsp::sample::AudioSample;
 use recovery::Recovery;
@@ -72,7 +72,7 @@ struct Workspace {
     playing: bool,
     arrangement_mode: bool,
     selected_bar: usize,
-    playback_bars: Vec<ArrangementBar>,
+    playback_bars: Vec<PlaybackBar>,
     selected: usize,
     selected_step: usize,
     bpm: f64,
@@ -234,12 +234,12 @@ impl Workspace {
         let project = self.session.editor.project();
         if self.arrangement_mode
             && self.playback.is_some()
-            && self.playback_bars != project.arrangement
+            && project.playback_bars().as_ref().ok() != Some(&self.playback_bars)
         {
             self.playback = None;
             self.playing = false;
             self.notice(
-                "Arrangement changed. Press Play to hear the new order.",
+                "Arrangement changed. Press Play to hear the updated arrangement.",
                 false,
             );
             return;
@@ -321,7 +321,13 @@ impl Workspace {
             })
         });
         let bars = if self.arrangement_mode {
-            project.arrangement.clone()
+            match project.playback_bars() {
+                Ok(bars) => bars,
+                Err(error) => {
+                    self.notice(format!("Cannot prepare arrangement: {error}"), true);
+                    return;
+                }
+            }
         } else {
             Vec::new()
         };

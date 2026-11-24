@@ -96,7 +96,8 @@ impl Workspace {
                         } else {
                             match bar {
                                 ArrangementBar::Main {} => TEXT,
-                                ArrangementBar::Variation { .. } => TRACK[1],
+                                ArrangementBar::Variation { .. }
+                                | ArrangementBar::Pattern { .. } => TRACK[1],
                                 ArrangementBar::Rest {} => MUTED,
                             }
                         };
@@ -226,6 +227,7 @@ fn bar_label(bar: &ArrangementBar) -> &'static str {
     match bar {
         ArrangementBar::Main {} => "Pattern",
         ArrangementBar::Variation { .. } => "Variation",
+        ArrangementBar::Pattern { .. } => "Named pattern",
         ArrangementBar::Rest {} => "Rest",
     }
 }

@@ -1,7 +1,7 @@
 //! Minimal playback with predecoded audio; callback performs no allocation or I/O.
 use crate::pattern::PatternRenderer;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use oxide_core::sequencer::{sequence_step_count, ArrangementBar, Pattern, TRACKS};
+use oxide_core::sequencer::{sequence_step_count, Pattern, PlaybackBar, TRACKS};
 use oxide_dsp::sample::AudioSample;
 use ringbuf::{
     traits::{Consumer, Producer, Split},
@@ -115,7 +115,7 @@ impl Playback {
     pub fn start_arrangement(
         samples: [AudioSample; TRACKS],
         pattern: Pattern,
-        arrangement: Vec<ArrangementBar>,
+        arrangement: Vec<PlaybackBar>,
         bpm: f64,
         device_name: Option<&str>,
         volume: f32,
@@ -320,7 +320,7 @@ enum Source {
     Sample(Renderer),
     Pattern {
         renderer: Box<PatternRenderer>,
-        arrangement: Vec<ArrangementBar>,
+        arrangement: Vec<PlaybackBar>,
     },
 }
 
@@ -473,9 +473,9 @@ mod tests {
         variation.set(1, 0, 127).unwrap();
         variation.set(1, 15, 127).unwrap();
         let arrangement = vec![
-            ArrangementBar::Main {},
-            ArrangementBar::Rest {},
-            ArrangementBar::Variation { pattern: variation },
+            PlaybackBar::Main {},
+            PlaybackBar::Rest {},
+            PlaybackBar::Variation { pattern: variation },
         ];
         let mut renderer = PatternRenderer::new(samples, main, 8, 120.0, 1.0).unwrap();
         renderer.play();
