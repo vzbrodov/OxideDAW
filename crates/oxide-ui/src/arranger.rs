@@ -29,7 +29,17 @@ impl Workspace {
     }
 
     fn arranger(&mut self, ui: &mut egui::Ui) {
+        let rack_pattern = self.rack_pattern().clone();
+        let selected_pattern_name = self
+            .named_pattern()
+            .map_or("Main pattern", |pattern| &pattern.name)
+            .to_owned();
         let project = self.session.editor.project();
+        let selected_pattern_bar = self
+            .selected_pattern
+            .map_or(ArrangementBar::Main {}, |pattern_id| {
+                ArrangementBar::Pattern { pattern_id }
+            });
         let bars = &project.arrangement;
         let count = bars.len();
         self.selected_bar = self.selected_bar.min(count.saturating_sub(1));
@@ -59,8 +69,12 @@ impl Workspace {
                             .color(MUTED),
                     );
                     ui.separator();
-                    if ui.button("+ Pattern").clicked() {
-                        edit = Some(BarEdit::Add(ArrangementBar::Main {}));
+                    if ui
+                        .button("+ Pattern")
+                        .on_hover_text(format!("Add {selected_pattern_name}"))
+                        .clicked()
+                    {
+                        edit = Some(BarEdit::Add(selected_pattern_bar.clone()));
                     }
                     if ui.button("+ Rest").clicked() {
                         edit = Some(BarEdit::Add(ArrangementBar::Rest {}));
@@ -71,7 +85,7 @@ impl Workspace {
                         .clicked()
                     {
                         edit = Some(BarEdit::Add(ArrangementBar::Variation {
-                            pattern: project.pattern.clone(),
+                            pattern: rack_pattern.clone(),
                         }));
                     }
                 });
@@ -79,7 +93,7 @@ impl Workspace {
                 if bars.is_empty() {
                     ui.label(
                         RichText::new(
-                            "Add a bar to arrange the pattern. Playback loops the current pattern.",
+                            "Add a bar to build an arrangement. With no bars, Arrangement plays the main pattern.",
                         )
                         .color(MUTED),
                     );
@@ -90,7 +104,14 @@ impl Workspace {
                     let width = (ui.available_width() - gap * (BARS_PER_PAGE - 1) as f32)
                         / BARS_PER_PAGE as f32;
                     for (index, bar) in bars.iter().enumerate().take(end).skip(first) {
-                        let text = format!("{}\n{}", index + 1, bar_label(bar));
+                        let name = match bar {
+                            ArrangementBar::Pattern { pattern_id } => project
+                                .patterns
+                                .iter()
+                                .find(|pattern| pattern.id == *pattern_id)
+                                .map_or("Named pattern", |pattern| &pattern.name),
+                            _ => bar_label(bar),
+                        };
                         let color = if index == selected {
                             TEXT
                         } else {
@@ -101,10 +122,19 @@ impl Workspace {
                                 ArrangementBar::Rest {} => MUTED,
                             }
                         };
+                        let label_width = (width - 2.0 * ui.spacing().button_padding.x).max(0.0);
+                        let mut label = egui::text::LayoutJob::simple(
+                            format!("{}\n{}", index + 1, name.lines().next().unwrap_or(name)),
+                            FontId::monospace(11.0),
+                            color,
+                            label_width,
+                        );
+                        label.wrap.max_rows = 2;
+                        label.wrap.break_anywhere = true;
+                        let label = ui.fonts_mut(|fonts| fonts.layout_job(label));
                         let response = ui.add_sized(
                             [width, 44.0],
-                            egui::Button::new(RichText::new(text).monospace().color(color))
-                                .selected(index == selected),
+                            egui::Button::new(label).selected(index == selected),
                         );
                         if current == Some(index) {
                             let edge = response.rect.shrink(2.0);
@@ -119,9 +149,7 @@ impl Workspace {
                         if response.double_clicked() {
                             seek = Some(index * STEPS);
                         }
-                        response.on_hover_text(
-                            "Select this bar. Double-click to seek during playback.",
-                        );
+                        response.on_hover_text(format!("{name}\nDouble-click to seek during playback."));
                     }
                 });
                 ui.horizontal(|ui| {
@@ -154,13 +182,22 @@ impl Workspace {
                         edit = Some(BarEdit::Move(selected + 1));
                     }
                     ui.menu_button("Replace with", |ui| {
+                        if self.selected_pattern.is_some()
+                            && ui
+                                .button("Selected pattern")
+                                .on_hover_text(&selected_pattern_name)
+                                .clicked()
+                        {
+                            edit = Some(BarEdit::Replace(selected_pattern_bar.clone()));
+                            ui.close();
+                        }
                         for (label, bar) in [
-                            ("Pattern", ArrangementBar::Main {}),
+                            ("Main pattern", ArrangementBar::Main {}),
                             ("Rest", ArrangementBar::Rest {}),
                             (
                                 "Current pattern as variation",
                                 ArrangementBar::Variation {
-                                    pattern: project.pattern.clone(),
+                                    pattern: rack_pattern.clone(),
                                 },
                             ),
                         ] {
@@ -210,16 +247,23 @@ impl Workspace {
         self.edit(&[EditCommand::SetArrangement { bars }]);
     }
 
-    pub(super) fn main_pattern_play_step(&self) -> Option<usize> {
+    pub(super) fn rack_play_step(&self) -> Option<usize> {
         let step = self.playback.as_ref()?.position_steps() as usize;
         let bars = &self.session.editor.project().arrangement;
-        if self.arrangement_mode && !bars.is_empty() {
-            let bar = (step / STEPS) % bars.len();
-            if !matches!(bars.get(bar), Some(ArrangementBar::Main {})) {
-                return None;
+        let matches = if !self.arrangement_mode {
+            true
+        } else if bars.is_empty() {
+            self.selected_pattern.is_none()
+        } else {
+            match &bars[(step / STEPS) % bars.len()] {
+                ArrangementBar::Main {} => self.selected_pattern.is_none(),
+                ArrangementBar::Pattern { pattern_id } => {
+                    self.selected_pattern == Some(*pattern_id)
+                }
+                ArrangementBar::Variation { .. } | ArrangementBar::Rest {} => false,
             }
-        }
-        Some(step % STEPS)
+        };
+        matches.then_some(step % STEPS)
     }
 }
 

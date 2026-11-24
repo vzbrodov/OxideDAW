@@ -172,8 +172,8 @@ if any action failed, even if a subsequent `save` succeeded.
 
 `set_arrangement` sets the bar order for WAV export. Bars can use the main pattern,
 an independent variation or a rest. See [the project format](docs/project-format.md)
-for bar definitions and v1/v2 compatibility. Use `project-edit` to create and
-edit named patterns and reuse them in multiple arrangement bars. Live
+for bar definitions and v1/v2 compatibility. Use the Rhythm panel or
+`project-edit` to create, edit and reuse named patterns in arrangement bars. Live
 arrangement playback and WAV export both use the referenced patterns.
 
 **OxideDAW** is an independent, general-purpose, cross-platform Digital Audio Workstation built for musicians, producers, sound designers, and composers on Windows and Linux. 

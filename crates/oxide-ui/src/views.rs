@@ -50,10 +50,7 @@ impl Workspace {
             self.selected_step = step;
         }
         self.velocity = self
-            .session
-            .editor
-            .project()
-            .pattern
+            .rack_pattern()
             .get(track, self.selected_step)
             .unwrap_or(0);
         self.sample_input = self
@@ -316,7 +313,7 @@ impl Workspace {
                                         if bars == 1 { "" } else { "s" }
                                     )
                                 } else {
-                                    "Pattern 01  •  1 bar".into()
+                                    "Pattern  •  1 bar".into()
                                 };
                                 ui.label(RichText::new(source).size(10.0).color(MUTED));
                             });

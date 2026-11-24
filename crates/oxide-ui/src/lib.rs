@@ -15,7 +15,7 @@ use oxide_audio::playback::{Playback, PlaybackCommand};
 use oxide_core::{
     edit::EditCommand,
     project::ProjectResult,
-    sequencer::{ArrangementBar, PlaybackBar, STEPS, TRACKS},
+    sequencer::{ArrangementBar, Pattern, PlaybackBar, STEPS, TRACKS},
 };
 use oxide_dsp::sample::AudioSample;
 use recovery::Recovery;
@@ -73,6 +73,8 @@ struct Workspace {
     arrangement_mode: bool,
     selected_bar: usize,
     playback_bars: Vec<PlaybackBar>,
+    selected_pattern: Option<u64>,
+    new_pattern: Option<instrument::NewPattern>,
     selected: usize,
     selected_step: usize,
     bpm: f64,
@@ -118,6 +120,8 @@ impl Workspace {
             arrangement_mode: false,
             selected_bar: 0,
             playback_bars: Vec::new(),
+            selected_pattern: None,
+            new_pattern: None,
             selected: 0,
             selected_step: 0,
             bpm,
@@ -218,11 +222,11 @@ impl Workspace {
     fn changed(&mut self) {
         self.bpm = self.session.editor.project().bpm;
         self.volume = self.session.editor.project().master_volume;
+        if self.selected_pattern.is_some() && self.named_pattern().is_none() {
+            self.select_pattern(None);
+        }
         self.velocity = self
-            .session
-            .editor
-            .project()
-            .pattern
+            .rack_pattern()
             .get(self.selected, self.selected_step)
             .unwrap_or(0);
         self.reload_samples();
@@ -245,19 +249,23 @@ impl Workspace {
             return;
         }
         self.send(PlaybackCommand::SetState {
-            pattern: project.pattern.clone(),
+            pattern: self.transport_pattern().clone(),
             bpm: project.bpm,
             volume: project.master_volume,
         });
     }
 
-    fn edit(&mut self, commands: &[EditCommand]) {
+    fn edit(&mut self, commands: &[EditCommand]) -> bool {
         match self.session.editor.apply_batch(commands) {
             Ok(true) => {
                 self.changed();
+                true
             }
-            Ok(false) => {}
-            Err(error) => self.notice(error.to_string(), true),
+            Ok(false) => false,
+            Err(error) => {
+                self.notice(error.to_string(), true);
+                false
+            }
         }
     }
 
@@ -280,7 +288,7 @@ impl Workspace {
         let playing_notice = if self.arrangement_mode {
             "Playing arrangement. Space pauses; stop returns to the first bar."
         } else {
-            "Playing Pattern 01. Space pauses; stop returns to the first step."
+            "Playing selected pattern. Space pauses; stop returns to the first step."
         };
         if self.playing {
             self.send(PlaybackCommand::Pause);
@@ -333,7 +341,7 @@ impl Workspace {
         };
         match Playback::start_arrangement(
             samples,
-            project.pattern.clone(),
+            self.transport_pattern().clone(),
             bars.clone(),
             project.bpm,
             None,
@@ -482,6 +490,7 @@ impl Workspace {
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
         if self.file_action.is_some()
+            || self.new_pattern.is_some()
             || self.confirm_close
             || self
                 .recovery
@@ -607,6 +616,7 @@ impl eframe::App for Workspace {
                 self.notice("Wait for WAV export to finish before closing.", false);
             } else if self.session.dirty() && !self.allow_close {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.new_pattern = None;
                 self.confirm_close = true;
             } else if let Some(recovery) = self.recovery.as_ref() {
                 if let Err(error) = recovery.finish() {
@@ -680,6 +690,7 @@ impl eframe::App for Workspace {
             self.save(ctx, false);
         }
         self.dialogs(ctx);
+        self.new_pattern_dialog(ctx);
         self.recovery_dialog(ctx);
         if !ctx.input(|i| i.viewport().close_requested()) {
             if let Some(recovery) = self.recovery.as_mut() {

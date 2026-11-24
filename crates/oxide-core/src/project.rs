@@ -11,7 +11,8 @@ use std::{
 };
 
 pub const FORMAT_VERSION: u32 = 3;
-const MAX_NAMED_PATTERNS: usize = 256;
+pub const MAX_NAMED_PATTERNS: usize = 256;
+pub const MAX_PATTERN_NAME_BYTES: usize = 128;
 const MAX_PROJECT_BYTES: usize = 16 * 1024 * 1024;
 const PROJECT_TOO_LARGE: &str = "Project JSON exceeds the 16 MiB size limit";
 pub type ProjectResult<T> = Result<T, Box<dyn Error>>;
@@ -111,7 +112,7 @@ impl Project {
             if pattern.id == 0 || !ids.insert(pattern.id) {
                 return Err("Pattern IDs must be nonzero and unique");
             }
-            if pattern.name.trim().is_empty() || pattern.name.len() > 128 {
+            if pattern.name.trim().is_empty() || pattern.name.len() > MAX_PATTERN_NAME_BYTES {
                 return Err("Pattern names must be nonempty and at most 128 UTF-8 bytes");
             }
         }

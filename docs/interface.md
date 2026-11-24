@@ -47,8 +47,12 @@ bar/beat/tick position and stereo output meters. File and Edit menus provide
 project actions; Library toggles the browser.
 
 **Rhythm panel.** Four channels and sixteen steps, grouped into four beats.
+Use the selector in the panel header to choose the main pattern or a named
+pattern. **New pattern…** creates and selects a blank one-bar pattern.
 Click a pad to toggle velocity 0/100; right-click to select without changing it.
-In the Pattern tab, the ruler above the pads seeks within the current bar. Double-click a channel name to audition its sample.
+The **Pattern** tab loops the selected pattern. Switching patterns in this tab
+stops playback. The ruler above the pads seeks within the current bar.
+Double-click a channel name to audition its sample.
 
 **Velocity bank.** The sixteen bars show the selected channel's step velocities.
 Click or drag a bar to edit; arrow keys make fine changes when it has focus.
@@ -103,16 +107,16 @@ Smaller windows scroll the workspace; the minimum size is 1040×740.
 ## Arrangement
 
 Use the **Arrangement** tab above the step sequencer to edit and loop the
-saved bar order. **+ Pattern** inserts a bar that follows edits to the main
+saved bar order. **+ Pattern** inserts a bar that follows edits to the selected
 pattern. **+ Variation** captures the current pattern as an independent bar.
 **+ Rest** adds a bar with no new hits.
 
 Select a bar to move, replace or remove it. Double-click a bar to seek while
 the transport is active. The highlighted bar follows playback. Switching
-tabs or changing the bar order stops playback. Press Play to hear the new
-sequence. Main-pattern, tempo and volume edits can still update a running
-session. The whole arrangement is saved with the project and each bar edit
-is one undo action.
+tabs, changing the bar order, or editing a named pattern used by the arrangement
+stops playback. Press Play to hear the updated sequence. Main-pattern, tempo
+and volume edits can update a running session. The whole arrangement is saved
+with the project and each bar edit is one undo action.
 
 ## Export a WAV
 

@@ -2,6 +2,12 @@ use super::skin::Skin;
 use super::widgets as w;
 use super::*;
 use egui::Color32;
+use oxide_core::project::{NamedPattern, MAX_NAMED_PATTERNS, MAX_PATTERN_NAME_BYTES};
+
+pub(super) struct NewPattern {
+    name: String,
+    focus_name: bool,
+}
 
 const INK: Color32 = Color32::from_rgb(43, 45, 44);
 const FACE: Color32 = Color32::from_rgb(182, 181, 172);
@@ -158,6 +164,166 @@ fn rotary(
 }
 
 impl Workspace {
+    pub(super) fn named_pattern(&self) -> Option<&NamedPattern> {
+        let id = self.selected_pattern?;
+        self.session
+            .editor
+            .project()
+            .patterns
+            .iter()
+            .find(|pattern| pattern.id == id)
+    }
+
+    pub(super) fn rack_pattern(&self) -> &Pattern {
+        self.named_pattern()
+            .map_or(&self.session.editor.project().pattern, |pattern| {
+                &pattern.pattern
+            })
+    }
+
+    pub(super) fn transport_pattern(&self) -> &Pattern {
+        if self.arrangement_mode {
+            &self.session.editor.project().pattern
+        } else {
+            self.rack_pattern()
+        }
+    }
+
+    pub(super) fn select_pattern(&mut self, pattern_id: Option<u64>) {
+        if self.selected_pattern == pattern_id {
+            return;
+        }
+        self.selected_pattern = pattern_id;
+        self.velocity = self
+            .rack_pattern()
+            .get(self.selected, self.selected_step)
+            .unwrap_or(0);
+        if !self.arrangement_mode {
+            self.playback = None;
+            self.playing = false;
+        }
+    }
+
+    fn step_command(&self, track: usize, step: usize, velocity: u8) -> EditCommand {
+        let track_id = self.session.editor.project().tracks[track].id;
+        match self.selected_pattern {
+            Some(pattern_id) => EditCommand::SetPatternStep {
+                pattern_id,
+                track_id,
+                step,
+                velocity,
+            },
+            None => EditCommand::SetStep {
+                track_id,
+                step,
+                velocity,
+            },
+        }
+    }
+
+    fn create_pattern(&mut self, name: String) -> bool {
+        let patterns = &self.session.editor.project().patterns;
+        // A free ID exists within this range even when projects use arbitrary IDs.
+        let Some(pattern_id) = (1..=patterns.len() as u64 + 1)
+            .find(|id| patterns.iter().all(|pattern| pattern.id != *id))
+        else {
+            self.notice("Could not assign an ID to the new pattern.", true);
+            return false;
+        };
+        if self.edit(&[EditCommand::AddPattern {
+            pattern_id,
+            name,
+            pattern: Pattern::default(),
+        }]) {
+            self.select_pattern(Some(pattern_id));
+            return true;
+        }
+        false
+    }
+
+    fn pattern_controls(&mut self, ui: &mut egui::Ui) {
+        let mut selected = self.selected_pattern;
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt("rack-pattern")
+                .selected_text(
+                    self.named_pattern()
+                        .map_or("Main pattern", |pattern| &pattern.name),
+                )
+                .width(156.0)
+                .truncate()
+                .show_ui(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(240.0)
+                        .show(ui, |ui| {
+                            ui.selectable_value(&mut selected, None, "Main pattern");
+                            for pattern in &self.session.editor.project().patterns {
+                                ui.selectable_value(&mut selected, Some(pattern.id), &pattern.name)
+                                    .on_hover_text(format!("Pattern ID {}", pattern.id));
+                            }
+                        });
+                })
+                .response
+                .on_hover_text("Pattern to edit");
+            let can_create = self.session.editor.project().patterns.len() < MAX_NAMED_PATTERNS;
+            if ui
+                .add_enabled(can_create, egui::Button::new("New pattern…"))
+                .on_disabled_hover_text("This project has reached the named pattern limit.")
+                .clicked()
+            {
+                self.new_pattern = Some(NewPattern {
+                    name: String::new(),
+                    focus_name: true,
+                });
+            }
+        });
+        self.select_pattern(selected);
+    }
+
+    pub(super) fn new_pattern_dialog(&mut self, ctx: &egui::Context) {
+        let Some(draft) = self.new_pattern.as_mut() else {
+            return;
+        };
+        let mut cancel = false;
+        let mut create = false;
+        let dialog = egui::Modal::new(egui::Id::new("new-rack-pattern")).show(ctx, |ui| {
+            ui.set_width(320.0);
+            ui.heading("New pattern");
+            let label = ui.label("Pattern name");
+            let input = ui
+                .add(egui::TextEdit::singleline(&mut draft.name).desired_width(f32::INFINITY))
+                .labelled_by(label.id);
+            if std::mem::take(&mut draft.focus_name) {
+                input.request_focus();
+            }
+            let trimmed = draft.name.trim();
+            let too_long = trimmed.len() > MAX_PATTERN_NAME_BYTES;
+            let valid = !trimmed.is_empty() && !too_long;
+            if too_long {
+                ui.label(
+                    RichText::new(format!(
+                        "Use a name up to {MAX_PATTERN_NAME_BYTES} UTF-8 bytes."
+                    ))
+                    .color(COPPER),
+                );
+            }
+            ui.horizontal(|ui| {
+                cancel = ui.button("Cancel").clicked();
+                create = ui.add_enabled(valid, egui::Button::new("Create")).clicked();
+            });
+            create |= valid
+                && input.lost_focus()
+                && ui.input(|input| input.key_pressed(egui::Key::Enter));
+        });
+        if create {
+            let name = draft.name.trim().to_owned();
+            if self.create_pattern(name) {
+                self.new_pattern = None;
+            }
+        } else if cancel || dialog.should_close() {
+            self.new_pattern = None;
+        }
+    }
+
     pub(super) fn rack(&mut self, ui: &mut egui::Ui) {
         let r = faceplate(ui, 400.0, false);
         let p = ui.painter();
@@ -177,21 +343,21 @@ impl Workspace {
             12.0,
             MUTED,
         );
-        p.text(
-            r.right_top() + vec2(-26.0, 28.0),
-            Align2::RIGHT_CENTER,
-            "PATTERN 01   ·   16 STEPS",
-            FontId::monospace(12.0),
-            ACCENT,
-        );
         p.line_segment(
             [r.min + vec2(24.0, 66.0), r.right_top() + vec2(-24.0, 66.0)],
             Stroke::new(1.0_f32, SHADOW),
         );
+        let controls = Rect::from_min_max(
+            r.right_top() + vec2(-280.0, 17.0),
+            r.right_top() + vec2(-26.0, 54.0),
+        );
+        ui.scope_builder(egui::UiBuilder::new().max_rect(controls), |ui| {
+            self.pattern_controls(ui);
+        });
         let left = r.left() + 202.0;
         let right = r.right() - 26.0;
         let cell = (right - left) / 16.0;
-        let play = self.main_pattern_play_step();
+        let play = self.rack_play_step();
         for beat in 0..4 {
             let x = left + beat as f32 * 4.0 * cell;
             text(
@@ -281,13 +447,7 @@ impl Workspace {
                     pos2(left + step as f32 * cell, y + 1.0),
                     vec2(cell - 3.0, 38.0),
                 );
-                let velocity = self
-                    .session
-                    .editor
-                    .project()
-                    .pattern
-                    .get(track, step)
-                    .unwrap_or(0);
+                let velocity = self.rack_pattern().get(track, step).unwrap_or(0);
                 let resp = ui.interact(pad, ui.id().with(("step", track, step)), Sense::click());
                 resp.widget_info(|| {
                     egui::WidgetInfo::labeled(
@@ -349,11 +509,11 @@ impl Workspace {
                 }
                 if resp.clicked() {
                     self.select_channel(track, Some(step));
-                    self.edit(&[EditCommand::SetStep {
-                        track_id: self.session.editor.project().tracks[track].id,
+                    self.edit(&[self.step_command(
+                        track,
                         step,
-                        velocity: if velocity == 0 { 100 } else { 0 },
-                    }]);
+                        if velocity == 0 { 100 } else { 0 },
+                    )]);
                 } else if resp.secondary_clicked() {
                     self.select_channel(track, Some(step));
                 }
@@ -399,13 +559,7 @@ impl Workspace {
                 pos2(left + step as f32 * cell + 5.0, y),
                 vec2(cell - 13.0, 45.0),
             );
-            let v = self
-                .session
-                .editor
-                .project()
-                .pattern
-                .get(self.selected, step)
-                .unwrap_or(0);
+            let v = self.rack_pattern().get(self.selected, step).unwrap_or(0);
             ui.painter().rect_filled(lane, 1, WELL);
             ui.painter().rect_filled(
                 Rect::from_min_max(
@@ -462,11 +616,7 @@ impl Workspace {
                 self.velocity = (i16::from(self.velocity) + keyboard_delta).clamp(0, 127) as u8;
             }
             if response.drag_stopped() || response.clicked() || keyboard_delta != 0 {
-                self.edit(&[EditCommand::SetStep {
-                    track_id: self.session.editor.project().tracks[self.selected].id,
-                    step,
-                    velocity: self.velocity,
-                }]);
+                self.edit(&[self.step_command(self.selected, step, self.velocity)]);
             }
             response.on_hover_text(format!("Step {} velocity {} · drag to edit", step + 1, v));
         }
@@ -480,20 +630,16 @@ impl Workspace {
                 let resp = ui.add(egui::Slider::new(&mut self.velocity, 0..=127).text("Velocity"));
                 if resp.drag_stopped() || resp.changed() && !ui.input(|i| i.pointer.primary_down())
                 {
-                    self.edit(&[EditCommand::SetStep {
-                        track_id: self.session.editor.project().tracks[self.selected].id,
-                        step: self.selected_step,
-                        velocity: self.velocity,
-                    }]);
+                    self.edit(&[self.step_command(
+                        self.selected,
+                        self.selected_step,
+                        self.velocity,
+                    )]);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if w::button(ui, "Clear channel", 92.0, false).clicked() {
                         let commands: Vec<_> = (0..STEPS)
-                            .map(|step| EditCommand::SetStep {
-                                track_id: self.session.editor.project().tracks[self.selected].id,
-                                step,
-                                velocity: 0,
-                            })
+                            .map(|step| self.step_command(self.selected, step, 0))
                             .collect();
                         self.edit(&commands);
                     }
@@ -685,5 +831,44 @@ impl Workspace {
                 if w::button(ui,"Load",49.0,false).clicked() || field.lost_focus()&&ui.input(|i|i.key_pressed(egui::Key::Enter)){self.assign(&PathBuf::from(&self.sample_input));}
             });
         });
+    }
+}
+
+#[cfg(test)]
+mod pattern_tests {
+    use super::*;
+
+    #[test]
+    fn rack_edits_and_previews_the_selected_pattern() {
+        let ctx = egui::Context::default();
+        let mut workspace = Workspace::new(Session::open(None).unwrap(), &ctx).unwrap();
+        let main = workspace.rack_pattern().clone();
+        assert!(workspace.create_pattern("Verse".into()));
+        let verse = workspace.selected_pattern.unwrap();
+        assert_eq!(workspace.velocity, 0);
+        assert!(workspace.edit(&[workspace.step_command(0, 0, 75)]));
+        assert_eq!(workspace.transport_pattern().get(0, 0), Some(75));
+        assert_eq!(workspace.session.editor.project().pattern, main);
+
+        workspace.arrangement_mode = true;
+        assert_eq!(workspace.transport_pattern(), &main);
+        assert_eq!(workspace.rack_pattern().get(0, 0), Some(75));
+        workspace.arrangement_mode = false;
+        workspace.select_pattern(None);
+        assert_eq!(workspace.velocity, main.get(0, 0).unwrap());
+        workspace.select_pattern(Some(verse));
+        assert_eq!(workspace.velocity, 75);
+
+        assert!(workspace.session.editor.undo());
+        workspace.changed();
+        assert_eq!(workspace.velocity, 0);
+        assert!(workspace.session.editor.undo());
+        workspace.changed();
+        assert_eq!(workspace.selected_pattern, None);
+        assert_eq!(workspace.rack_pattern(), &main);
+        assert!(workspace.session.editor.redo());
+        workspace.changed();
+        workspace.select_pattern(Some(verse));
+        assert_eq!(workspace.rack_pattern().get(0, 0), Some(0));
     }
 }
