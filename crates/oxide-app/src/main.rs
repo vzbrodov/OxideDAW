@@ -2,7 +2,7 @@
 mod controls;
 mod editor;
 mod project_pack;
-use oxide_audio::export::export_project;
+use oxide_audio::export::{export_project_as, WavEncoding};
 use oxide_audio::playback::{output_devices, Playback};
 use oxide_core::{
     sequencer::{sequence_step_count, Pattern, TRACKS},
@@ -25,7 +25,7 @@ const HELP: &str = "Usage:
   oxide-app project-new <project.oxide.json> <kick.wav> <snare.wav> <hat.wav> <perc.wav> [bpm] [volume: 0..1]
   oxide-app project-info <project.oxide.json>
   oxide-app project-play <project.oxide.json> [--arrangement] [device name]
-  oxide-app project-export <project.oxide.json> <output.wav>
+  oxide-app project-export <project.oxide.json> <output.wav> [--format <pcm16|pcm24|float32>]
   oxide-app project-pack <project.oxide.json> <new-directory>
   oxide-app project-edit <project.oxide.json>
 pattern and project-new use a preset 16-step beat. Default BPM: 120, volume: 0.5.
@@ -184,12 +184,22 @@ fn run() -> Result<()> {
             );
             wait_for_stop(playback, true)?;
         }
-        Some("project-export") if args.len() == 3 => {
+        Some("project-export") if args.len() >= 3 => {
+            let encoding = match &args[3..] {
+                [] => WavEncoding::default(),
+                [flag, value] if flag == "--format" => match value.as_str() {
+                    "pcm16" => WavEncoding::Pcm16,
+                    "pcm24" => WavEncoding::Pcm24,
+                    "float32" => WavEncoding::Float32,
+                    _ => return Err("WAV format must be pcm16, pcm24, or float32".into()),
+                },
+                _ => return Err("Expected --format <pcm16|pcm24|float32> after output path".into()),
+            };
             let path = Path::new(&args[1]);
             let destination = Path::new(&args[2]);
             let project = Project::load(path)?;
             let samples = load_project_samples(&project, path, true)?;
-            export_project(&project, samples, destination)
+            export_project_as(&project, samples, destination, encoding)
                 .map_err(|error| format!("Cannot export {}: {error}", destination.display()))?;
             println!("Exported {}", destination.display());
         }

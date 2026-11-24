@@ -192,6 +192,90 @@ fn export_resamples_and_drains_the_last_hit_at_fractional_tempo() {
 }
 
 #[test]
+fn export_writes_selected_wav_encoding() {
+    let fixture = Fixture::new();
+    fixture.wave_samples(2, &[i16::MAX, i16::MIN, 1, -1]);
+    let mut project = Project {
+        bpm: 120.0,
+        sample_rate: 8000,
+        master_volume: 1.0,
+        ..Project::default()
+    };
+    for track in 0..2 {
+        project.tracks[track].sample = Some("sample.wav".into());
+        project.pattern.set(track, 0, 64).unwrap();
+    }
+    project
+        .save_new(&fixture.0.join("beat.oxide.json"))
+        .unwrap();
+
+    for (format, tag, bits, data_offset) in [
+        ("pcm16", 1, 16, 44),
+        ("pcm24", 1, 24, 44),
+        ("float32", 3, 32, 58),
+    ] {
+        let name = format!("{format}.wav");
+        let args = [
+            "project-export",
+            "beat.oxide.json",
+            &name,
+            "--format",
+            format,
+        ];
+        let result = fixture.run(&args);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+
+        let path = fixture.0.join(&name);
+        let bytes = fs::read(&path).unwrap();
+        let u32_at = |offset| u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
+        assert_eq!(u32_at(4) as usize, bytes.len() - 8);
+        assert_eq!(u16::from_le_bytes(bytes[20..22].try_into().unwrap()), tag);
+        assert_eq!(u16::from_le_bytes(bytes[34..36].try_into().unwrap()), bits);
+        assert_eq!(&bytes[data_offset - 8..data_offset - 4], b"data");
+        assert_eq!(u32_at(data_offset - 4) as usize, bytes.len() - data_offset);
+
+        let decoded = oxide_dsp::sample::AudioSample::load(&path).unwrap();
+        assert_eq!((decoded.channels, decoded.sample_rate), (2, 8000));
+        assert_eq!(decoded.samples.len(), 32000);
+        assert_eq!(decoded.samples[1], -1.0);
+        match format {
+            "pcm16" => {
+                assert_eq!(decoded.samples[0], 32767.0 / 32768.0);
+                assert_eq!(decoded.samples[2], 1.0 / 32768.0);
+            }
+            "pcm24" => {
+                assert_eq!(decoded.samples[0], 8388607.0 / 8388608.0);
+                assert_eq!(decoded.samples[2], 258.0 / 8388608.0);
+            }
+            "float32" => {
+                assert_eq!(decoded.samples[0], 1.0);
+                assert_eq!(decoded.samples[2], (128.0 / 127.0) / 32768.0);
+                assert_eq!(&bytes[38..42], b"fact");
+                assert_eq!(u32_at(46) as usize, decoded.samples.len() / 2);
+            }
+            _ => unreachable!(),
+        }
+        assert!(!fixture.run(&args).status.success());
+        assert_eq!(fs::read(path).unwrap(), bytes);
+    }
+
+    let bad = fixture.run(&[
+        "project-export",
+        "beat.oxide.json",
+        "bad.wav",
+        "--format",
+        "opus",
+    ]);
+    assert!(!bad.status.success());
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("WAV format must be"));
+    assert!(!fixture.0.join("bad.wav").exists());
+}
+
+#[test]
 fn export_keeps_a_full_silent_bar_and_reports_missing_assigned_media() {
     let fixture = Fixture::new();
     let path = fixture.0.join("beat.oxide.json");

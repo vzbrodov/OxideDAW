@@ -59,7 +59,13 @@ Each entry has one of these shapes.
 | `{"type":"rest"}` | Advance one bar without starting new hits. Already sounding samples can ring through it. |
 
 `project-export` renders all bars in order and drains any remaining sample
-tails at the end. `project-play` loops the main pattern by default.
+tails at the end. The CLI accepts `--format pcm16` (default), `--format pcm24`,
+and `--format float32` after the output path. All three write stereo RIFF WAVE.
+Float WAV uses the IEEE float format tag and a `fact` chunk whose sample
+count is the number of frames per channel.
+[IBM and Microsoft RIFF update](https://www.mmsp.ece.mcgill.ca/Documents/AudioFormats/WAVE/Docs/RIFFNEW.pdf)
+
+`project-play` loops the main pattern by default.
 `project-play PROJECT --arrangement [DEVICE]` loops the complete arrangement
 at the audio device's sample rate. Voice tails can overlap the wrap into
 the first bar. In this mode, `seek` counts steps across bars starting at zero.

@@ -131,11 +131,15 @@ The desktop app offers **File → Export WAV** for the current project, includin
 
 ```sh
 cargo run -p oxide-app -- project-export beat.oxide.json beat.wav
+cargo run -p oxide-app -- project-export beat.oxide.json beat-24.wav --format pcm24
+cargo run -p oxide-app -- project-export beat.oxide.json beat-float.wav --format float32
 ```
 
 Export renders the saved arrangement, or one 16-step pattern when the
-arrangement is empty. The new file contains stereo 16-bit PCM at the project's
-sample rate, including any ringing sample tails. Export uses the saved BPM,
+arrangement is empty. Each format writes stereo audio at the project's sample
+rate, including any ringing sample tails. The default is 16-bit PCM (`pcm16`).
+All formats use the same master output limited to the range −1 to +1.
+Export uses the saved BPM,
 step velocities and master volume without opening an audio device. Unassigned
 tracks are silent. Missing assigned media causes an error.
 
