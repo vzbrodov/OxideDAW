@@ -183,7 +183,7 @@ Whether you are writing orchestral arrangements, recording live acoustic instrum
 
 By leveraging Rust, OxideDAW delivers deterministic real-time audio safety without garbage collection pauses, ultra-low latency audio processing on both Windows (WASAPI) and Linux (PipeWire / JACK / ALSA), and a lightweight, GPU-accelerated interface.
 
-In addition, OxideDAW features a native **Model Context Protocol (MCP)** server embedded directly into the application, turning AI assistants into interactive studio co-producers capable of manipulating MIDI sequences, arrangements, audio routing, and mixer states via structured protocol messages.
+OxideDAW includes a local MCP server for inspecting a saved project.
 
 ---
 
@@ -207,8 +207,7 @@ In addition, OxideDAW features a native **Model Context Protocol (MCP)** server 
    - **Live Scripting Engine:** Write lightweight scripts (WASM / Rhai / Lua) for algorithmic MIDI generation, custom arpeggiators, and generative sequencing in real time.
 
 4. **Embedded Model Context Protocol (MCP) Engine**
-   - Built-in MCP server communicating over standard I/O or local WebSockets.
-   - Enables connected AI agents (Claude, Cursor, local LLMs) to query project state, generate MIDI parts, configure mixer routing, and assist with sound design and orchestration programmatically.
+   - MCP clients can launch the CLI over standard I/O and inspect a saved project.
 
 ---
 
@@ -234,15 +233,30 @@ OxideDAW/
 
 ---
 
-## MCP Tool Interfaces (AI Co-Producer)
+## Connect an MCP client
 
-The embedded MCP interface exposes tools that allow AI assistants to manipulate musical data directly inside the project:
+Build with `cargo build --locked -p oxide-app`. Configure a stdio MCP client
+with the absolute path to the resulting executable and two arguments. For
+clients using an `mcpServers` configuration:
 
-- `generate_drum_pattern`: Program kick, snare, clap, and hi-hat triggers onto a target pattern grid with custom velocity dynamics and swing.
-- `create_chord_progression`: Insert diatonic or modal chord voicings into the Piano Roll based on scale, root key, and rhythmic pacing.
-- `humanize_notes`: Apply non-destructive micro-timing nudges and velocity variations to humanize quantized MIDI clips.
-- `route_mixer_channel`: Configure channel gains, pans, sends, and sidechain compression routings across mixer tracks.
-- `get_project_summary`: Provide the agent with context regarding BPM, active tracks, key signatures, and time signatures.
+```json
+{
+  "mcpServers": {
+    "oxidedaw": {
+      "command": "/absolute/path/to/target/debug/oxide-app",
+      "args": ["mcp", "/absolute/path/to/beat.oxide.json"]
+    }
+  }
+}
+```
+
+The server loads one read-only snapshot at startup. Restart it to inspect a
+later save. Call `get_project_summary` with `{}` to read tempo, sample rate,
+master volume, track IDs, names and sample assignments, and counts of named
+patterns and arranged bars. Project and track display names use the first
+256 Unicode characters. The server accepts messages up to 64 KiB including
+the newline and uses the [MCP 2025-06-18 stdio protocol](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports).
+
 
 ---
 
@@ -283,7 +297,7 @@ Implementation status and development roadmap (Russian): [DEVELOPMENT_PLAN.md](D
 - [ ] Implement lightweight scripting runtime for generative MIDI and custom algorithmic effects.
 
 ### Phase 7: Model Context Protocol (MCP) Integration
-- [ ] Embed lightweight JSON-RPC / MCP server within the daemon/app.
+- [x] Expose a project summary through a local stdio MCP server.
 - [ ] Expose sequence, mixer, and project manipulation tools to AI agents.
 - [ ] Test end-to-end workflows with external agents (e.g. Claude Desktop, Cursor).
 

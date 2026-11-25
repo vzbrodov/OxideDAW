@@ -13,3 +13,6 @@ pub struct McpToolResult {
     pub success: bool,
     pub data: serde_json::Value,
 }
+
+mod server;
+pub use server::serve;

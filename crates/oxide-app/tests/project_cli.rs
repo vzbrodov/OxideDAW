@@ -606,3 +606,55 @@ fn editor_rejects_malformed_and_invalid_batches_without_partial_saves() {
         2
     );
 }
+
+#[test]
+fn stdio_mcp_reads_project_and_recovers_from_invalid_messages() {
+    let fixture = Fixture::new();
+    let path = fixture.0.join("beat.oxide.json");
+    let project = Project {
+        bpm: 121.5,
+        ..Project::default()
+    };
+    project.save_new(&path).unwrap();
+    let original = fs::read(&path).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_oxide-app"))
+        .arg("mcp")
+        .arg(&path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    writeln!(input, "{}", "x".repeat(70_000)).unwrap();
+    input.write_all(br#"invalid json
+{"jsonrpc":"2.0","id":1,"method":"tools/list"}
+{"jsonrpc":"2.0","id":"init","method":"initialize","params":{"protocolVersion":"future","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{"jsonrpc":"2.0","id":2,"method":"tools/list"}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_project_summary","arguments":{"path":"elsewhere"}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_project_summary","arguments":{}}}
+"#).unwrap();
+    drop(input);
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let replies: Vec<serde_json::Value> = String::from_utf8(out.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(replies.len(), 7);
+    assert_eq!(replies[0]["error"]["code"], -32600);
+    assert_eq!(replies[1]["error"]["code"], -32700);
+    assert_eq!(replies[2]["error"]["code"], -32002);
+    assert_eq!(replies[3]["id"], "init");
+    assert_eq!(replies[3]["result"]["protocolVersion"], "2025-06-18");
+    assert_eq!(
+        replies[4]["result"]["tools"][0]["name"],
+        "get_project_summary"
+    );
+    assert_eq!(replies[5]["error"]["code"], -32602);
+    let summary = &replies[6]["result"]["structuredContent"];
+    assert_eq!(summary["bpm"], 121.5);
+    assert_eq!(summary["tracks"][0]["id"], project.tracks[0].id);
+    assert_eq!(fs::read(path).unwrap(), original);
+}
