@@ -46,7 +46,7 @@ bug. Keep the change scoped and preserve other contributors' local edits.
 | `oxide-midi` | MIDI note and clip models |
 | `oxide-app` | CLI entry point and optional desktop startup |
 | `oxide-ui` | Native desktop views, gestures, and session coordination |
-| `oxide-mcp` | Local stdio MCP server and read-only project inspection |
+| `oxide-mcp` | Local stdio MCP server for project inspection and opt-in step editing |
 | `oxide-plugin-sdk` | Preliminary plugin API |
 
 Keep GUI, device, and protocol concerns out of the musical model. Put project

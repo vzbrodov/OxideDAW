@@ -15,4 +15,4 @@ pub struct McpToolResult {
 }
 
 mod server;
-pub use server::serve;
+pub use server::{serve, serve_editable};

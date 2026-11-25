@@ -250,13 +250,29 @@ clients using an `mcpServers` configuration:
 }
 ```
 
-The server loads one read-only snapshot at startup. Restart it to inspect a
+By default the server opens a read-only snapshot at startup. Restart it to inspect a
 later save. Call `get_project_summary` with `{}` to read tempo, sample rate,
 master volume, track IDs, names and sample assignments, and counts of named
 patterns and arranged bars. Project and track display names use the first
 256 Unicode characters. The server accepts messages up to 64 KiB including
 the newline and uses the [MCP 2025-06-18 stdio protocol](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports).
 
+Call `get_main_pattern` with `{}` to inspect the 16 step velocities for each
+track. The returned `trackIds` array gives the stable ID for each grid row.
+
+To edit the main pattern, append `--edit` after the project path in the
+client arguments. Call `set_main_steps` with a batch such as:
+
+```json
+{"steps":[{"track_id":1,"step":0,"velocity":120},{"track_id":1,"step":4,"velocity":0}]}
+```
+
+Each batch accepts 1–64 edits and creates one undo action when it changes
+the pattern. Steps are zero-based. Velocity zero clears a trigger. Use
+`undo` and `redo` with `{}` to traverse session history. Changes stay in
+memory until `save_project` with `{}` atomically replaces the launch file
+with the session snapshot, including if another application saved it since
+launch. Closing the connection discards unsaved changes.
 
 ---
 

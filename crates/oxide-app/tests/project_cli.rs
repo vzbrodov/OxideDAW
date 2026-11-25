@@ -633,6 +633,7 @@ fn stdio_mcp_reads_project_and_recovers_from_invalid_messages() {
 {"jsonrpc":"2.0","id":2,"method":"tools/list"}
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_project_summary","arguments":{"path":"elsewhere"}}}
 {"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_project_summary","arguments":{}}}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"save_project","arguments":{}}}
 "#).unwrap();
     drop(input);
     let out = child.wait_with_output().unwrap();
@@ -642,7 +643,9 @@ fn stdio_mcp_reads_project_and_recovers_from_invalid_messages() {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
-    assert_eq!(replies.len(), 7);
+    assert_eq!(replies.len(), 8);
+    assert_eq!(replies[4]["result"]["tools"].as_array().unwrap().len(), 2);
+    assert_eq!(replies[7]["error"]["code"], -32602);
     assert_eq!(replies[0]["error"]["code"], -32600);
     assert_eq!(replies[1]["error"]["code"], -32700);
     assert_eq!(replies[2]["error"]["code"], -32002);
@@ -657,4 +660,82 @@ fn stdio_mcp_reads_project_and_recovers_from_invalid_messages() {
     assert_eq!(summary["bpm"], 121.5);
     assert_eq!(summary["tracks"][0]["id"], project.tracks[0].id);
     assert_eq!(fs::read(path).unwrap(), original);
+}
+
+#[test]
+fn editable_mcp_batches_undo_and_saves_only_on_request() {
+    use serde_json::{json, Value};
+    use std::io::{BufRead, BufReader};
+
+    let fixture = Fixture::new();
+    let path = fixture.0.join("beat.oxide.json");
+    let initial = Project::default();
+    initial.save_new(&path).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_oxide-app"))
+        .arg("mcp")
+        .arg(&path)
+        .arg("--edit")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    writeln!(input, "{}", json!({"jsonrpc":"2.0","id":0,"method":"initialize","params":{
+        "protocolVersion":"2025-06-18","clientInfo":{"name":"test","version":"1"},"capabilities":{}}})).unwrap();
+    reader.read_line(&mut line).unwrap();
+    writeln!(
+        input,
+        "{}",
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"})
+    )
+    .unwrap();
+    {
+        let mut id = 0;
+        let mut call = |name: &str, arguments: Value| {
+            id += 1;
+            writeln!(input,"{}", json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":name,"arguments":arguments}})).unwrap();
+            line.clear();
+            reader.read_line(&mut line).unwrap();
+            serde_json::from_str::<Value>(&line).unwrap()
+        };
+        let step = |index, velocity| json!({"track_id":1,"step":index,"velocity":velocity});
+        let batch = json!({"steps":[step(0,80),step(15,110)]});
+        assert_eq!(
+            call("set_main_steps", batch)["result"]["structuredContent"]["changed"],
+            true
+        );
+        assert_eq!(
+            call("undo", json!({}))["result"]["structuredContent"]["changed"],
+            true
+        );
+        let grid = call("get_main_pattern", json!({}));
+        assert_eq!(
+            grid["result"]["structuredContent"]["pattern"],
+            json!(initial.pattern)
+        );
+        let invalid = json!({"steps":[step(2,100),step(16,90)]});
+        assert_eq!(
+            call("set_main_steps", invalid)["result"]["structuredContent"]["code"],
+            "edit_rejected"
+        );
+        let oversized = json!({"steps":vec![step(0,1);65]});
+        assert_eq!(call("set_main_steps", oversized)["error"]["code"], -32602);
+        assert_eq!(
+            call("redo", json!({}))["result"]["structuredContent"]["changed"],
+            true
+        );
+        assert_eq!(Project::load(&path).unwrap(), initial);
+        assert_eq!(
+            call("save_project", json!({}))["result"]["structuredContent"]["saved"],
+            true
+        );
+    }
+    drop(input);
+    assert!(child.wait().unwrap().success());
+    let mut expected = initial;
+    expected.pattern.set(0, 0, 80).unwrap();
+    expected.pattern.set(0, 15, 110).unwrap();
+    assert_eq!(Project::load(&path).unwrap(), expected);
 }
