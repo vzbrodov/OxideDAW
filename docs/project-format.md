@@ -92,6 +92,7 @@ session-local and capped at 128 actions.
 | `set_master_volume` | `volume` (0..1) |
 | `set_sample` | `track_id`, `sample` (stored path or `null` to unassign) |
 | `set_arrangement` | `bars` (the complete ordered list, or `[]` for single-pattern export) |
+| `insert_bar` | `index` (zero-based), `bar` (any arrangement bar). Inserts before the given index and shifts later bars right. The bar count is the append index. |
 | `add_pattern` | Unused nonzero `pattern_id`, `name`, and optional `pattern` (a blank grid by default). Supply a grid to copy an existing pattern. |
 | `set_pattern_step` | `pattern_id`, `track_id`, zero-based `step` (0..15), `velocity` (0..127) |
 | `rename_pattern` | `pattern_id`, `name` |

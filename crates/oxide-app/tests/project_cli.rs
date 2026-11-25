@@ -398,7 +398,9 @@ fn named_pattern_edits_update_every_linked_bar_after_reopening() {
     project.save_new(&path).unwrap();
     let result = fixture.edit(concat!(
         r#"[{"command":"add_pattern","pattern_id":42,"name":"Verse"},"#,
-        r#"{"command":"set_arrangement","bars":[{"type":"pattern","pattern_id":42},{"type":"rest"},{"type":"pattern","pattern_id":42}]}]"#,
+        r#"{"command":"insert_bar","index":0,"bar":{"type":"pattern","pattern_id":42}},"#,
+        r#"{"command":"insert_bar","index":1,"bar":{"type":"pattern","pattern_id":42}},"#,
+        r#"{"command":"insert_bar","index":1,"bar":{"type":"rest"}}]"#,
         "\nundo\nredo\nsave\nquit\n",
     ));
     assert!(

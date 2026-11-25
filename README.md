@@ -153,7 +153,8 @@ command or JSON array per line. An array applies atomically and undoes as one ac
 {"command":"set_step","track_id":1,"step":0,"velocity":100}
 [{"command":"set_bpm","bpm":128},{"command":"set_master_volume","volume":0.4}]
 {"command":"set_sample","track_id":2,"sample":"samples/snare.wav"}
-{"command":"set_arrangement","bars":[{"type":"main"},{"type":"rest"},{"type":"main"}]}
+{"command":"set_arrangement","bars":[{"type":"main"},{"type":"main"}]}
+{"command":"insert_bar","index":1,"bar":{"type":"rest"}}
 undo
 redo
 show

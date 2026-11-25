@@ -30,6 +30,10 @@ pub enum EditCommand {
     SetArrangement {
         bars: Vec<ArrangementBar>,
     },
+    InsertBar {
+        index: usize,
+        bar: ArrangementBar,
+    },
     AddPattern {
         pattern_id: u64,
         name: String,
@@ -97,6 +101,16 @@ impl ProjectEditor {
                     candidate.tracks[track].sample = sample.clone();
                 }
                 EditCommand::SetArrangement { bars } => candidate.arrangement.clone_from(bars),
+                EditCommand::InsertBar { index, bar } => {
+                    let count = candidate.arrangement.len();
+                    if *index > count {
+                        return Err(format!(
+                            "Bar insertion index {index} exceeds bar count {count}"
+                        )
+                        .into());
+                    }
+                    candidate.arrangement.insert(*index, bar.clone());
+                }
                 EditCommand::AddPattern {
                     pattern_id,
                     name,
@@ -181,6 +195,30 @@ fn pattern_index(project: &Project, id: u64) -> ProjectResult<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn insert_bar_checks_position_before_changing_project_or_history() {
+        let mut editor = ProjectEditor::new(Project::default()).unwrap();
+        let insert = EditCommand::InsertBar {
+            index: 0,
+            bar: ArrangementBar::Main {},
+        };
+        editor.apply_batch(std::slice::from_ref(&insert)).unwrap();
+        let arranged = editor.project().clone();
+        assert!(editor.undo());
+        assert!(editor
+            .apply_batch(&[
+                insert,
+                EditCommand::InsertBar {
+                    index: usize::MAX,
+                    bar: ArrangementBar::Rest {}
+                }
+            ])
+            .is_err());
+        assert_eq!(editor.project(), &Project::default());
+        assert!(editor.redo());
+        assert_eq!(editor.project(), &arranged);
+    }
 
     #[test]
     fn batch_uses_stable_ids_and_undo_redo_restores_every_field() {
