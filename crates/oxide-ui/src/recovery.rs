@@ -161,9 +161,12 @@ mod tests {
         let root = std::env::temp_dir().join(format!("oxide-recovery-{}", std::process::id()));
         fs::create_dir(&root)?;
         let original = root.join("original.oxide.json");
-        let mut project = Project::default();
-        project.tracks[0].sample = Some("missing.wav".into());
-        project.save_new(&original)?;
+        // Copy only the document to exercise recovery with its media offline.
+        fs::write(
+            &original,
+            include_bytes!("../../../tests/fixtures/legacy-beat/v2.oxide.json"),
+        )?;
+        let project = Project::load(&original)?;
         let mut session = Session::open(Some(&original))?;
         let state = root.join("state");
         let mut writer = Recovery::in_directory(&state, &session)?;
@@ -190,7 +193,7 @@ mod tests {
         assert_eq!(recovered.editor.project().bpm, 131.0);
         assert_eq!(
             recovered.sample_path(0),
-            Some(root.canonicalize()?.join("missing.wav"))
+            Some(root.canonicalize()?.join("sample.wav"))
         );
         assert!(recovered.save(&original).is_err());
         assert_eq!(Project::load(&original)?.bpm, project.bpm);
@@ -201,7 +204,9 @@ mod tests {
         restarted.clear(&recovered)?;
         assert!(!snapshot.exists());
         restarted.finish()?;
-        assert_eq!(Project::load(&destination)?.bpm, 131.0);
+        let restored = Project::load(&destination)?;
+        assert_eq!(restored.bpm, 131.0);
+        assert_eq!(restored.arrangement, project.arrangement);
         fs::remove_dir_all(root)?;
         Ok(())
     }

@@ -515,6 +515,76 @@ mod tests {
     }
 
     #[test]
+    fn looped_playback_matches_unrolled_export_at_fractional_tempo() {
+        use crate::export::{export_project_as, WavEncoding};
+        use oxide_core::{sequencer::ArrangementBar, Project};
+
+        let mut project = Project {
+            sample_rate: 8000,
+            bpm: 937.25,
+            master_volume: 1.0,
+            arrangement: vec![ArrangementBar::Main {}, ArrangementBar::Rest {}],
+            ..Project::default()
+        };
+        // A fractional number of frames per step forces rounding across loops.
+        project.pattern.set(0, 0, 127).unwrap();
+        project.pattern.set(0, 15, 127).unwrap();
+        let samples = std::array::from_fn(|_| AudioSample {
+            sample_rate: project.sample_rate,
+            channels: 1,
+            samples: vec![0.5],
+        });
+        let mut renderer = PatternRenderer::new(
+            samples.clone(),
+            project.pattern.clone(),
+            project.sample_rate,
+            project.bpm,
+            project.master_volume,
+        )
+        .unwrap();
+        renderer.play();
+        let mut source = Source::Pattern {
+            renderer: Box::new(renderer),
+            arrangement: project.playback_bars().unwrap(),
+        };
+        let frame_at = |step: usize| (step as f64 * 8000.0 * 15.0 / project.bpm).round() as usize;
+        const LOOPS: usize = 128;
+        let mut live = vec![[0.0; 2]; frame_at(32 * LOOPS)];
+        // Start the second callback exactly on the last trigger of the first bar.
+        let (first, rest) = live.split_at_mut(frame_at(15));
+        source.render(first);
+        for block in rest.chunks_mut(127) {
+            source.render(block);
+        }
+        let expected: Vec<_> = (0..LOOPS)
+            .flat_map(|i| [frame_at(i * 32), frame_at(i * 32 + 15)])
+            .collect();
+        let hits: Vec<_> = live
+            .iter()
+            .enumerate()
+            .filter(|(_, frame)| **frame != [0.0; 2])
+            .map(|(index, _)| index)
+            .collect();
+        assert_eq!(hits, expected);
+
+        project.arrangement = project
+            .arrangement
+            .iter()
+            .cycle()
+            .take(2 * LOOPS)
+            .cloned()
+            .collect();
+        let path =
+            std::env::temp_dir().join(format!("oxide-loop-export-{}.wav", std::process::id()));
+        export_project_as(&project, samples, &path, WavEncoding::Float32).unwrap();
+        let wav = AudioSample::load(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(wav.channels, 2);
+        assert_eq!(wav.sample_rate, project.sample_rate);
+        assert!(wav.samples.iter().eq(live.as_flattened()));
+    }
+
+    #[test]
     fn resamples_mono_and_silences_after_end() {
         let mut renderer = Renderer {
             sample: AudioSample {

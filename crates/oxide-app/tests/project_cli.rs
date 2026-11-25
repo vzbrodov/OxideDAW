@@ -307,22 +307,12 @@ fn export_keeps_a_full_silent_bar_and_reports_missing_assigned_media() {
 #[test]
 fn legacy_project_can_save_undo_and_export_an_arrangement() {
     let fixture = Fixture::new();
-    fixture.wave_samples(1, &[8192; 1024]);
+    let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/legacy-beat");
+    fs::copy(assets.join("sample.wav"), fixture.0.join("sample.wav")).unwrap();
     let path = fixture.0.join("beat.oxide.json");
-    let mut original = Project {
-        bpm: 137.0,
-        sample_rate: 8000,
-        master_volume: 1.0,
-        ..Project::default()
-    };
-    original.tracks[0].sample = Some("sample.wav".into());
-    original.pattern.set(0, 0, 127).unwrap();
-    original.pattern.set(0, 15, 127).unwrap();
-    let mut legacy = serde_json::to_value(&original).unwrap();
-    legacy["format_version"] = 1.into();
-    legacy.as_object_mut().unwrap().remove("arrangement");
-    fs::write(&path, legacy.to_string()).unwrap();
-    assert_eq!(Project::load(&path).unwrap(), original);
+    fs::copy(assets.join("v1.oxide.json"), &path).unwrap();
+    let original = Project::load(&path).unwrap();
+    assert_eq!(original.format_version, FORMAT_VERSION);
 
     let mut variation = Pattern::default();
     variation.set(0, 0, 64).unwrap();
@@ -351,9 +341,7 @@ fn legacy_project_can_save_undo_and_export_an_arrangement() {
     let stored: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     assert_eq!(stored["format_version"], FORMAT_VERSION);
 
-    let mut v2 = stored;
-    v2["format_version"] = 2.into();
-    fs::write(&path, v2.to_string()).unwrap();
+    fs::copy(assets.join("v2.oxide.json"), &path).unwrap();
     assert_eq!(Project::load(&path).unwrap(), saved);
 
     let result = fixture.run(&["project-export", "beat.oxide.json", "song.wav"]);
